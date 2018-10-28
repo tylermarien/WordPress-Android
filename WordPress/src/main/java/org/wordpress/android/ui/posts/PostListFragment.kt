@@ -50,6 +50,7 @@ import org.wordpress.android.fluxc.store.ListStore.OnListChanged.CauseOfListChan
 import org.wordpress.android.fluxc.store.ListStore.OnListItemsChanged
 import org.wordpress.android.fluxc.store.MediaStore.OnMediaChanged
 import org.wordpress.android.fluxc.store.MediaStore.OnMediaUploaded
+import org.wordpress.android.fluxc.store.PostListMarker
 import org.wordpress.android.fluxc.store.PostStore
 import org.wordpress.android.fluxc.store.PostStore.FetchPostListPayload
 import org.wordpress.android.fluxc.store.PostStore.OnPostChanged
@@ -117,13 +118,13 @@ class PostListFragment : Fragment(),
     @Inject internal lateinit var listStore: ListStore
     @Inject internal lateinit var dispatcher: Dispatcher
 
-    private var listManager: ListManager<PostModel>? = null
+    private var listManager: ListManager<PostModel, PostListMarker>? = null
     private var refreshListDataJob: Job? = null
     private val listDescriptor: PostListDescriptor by lazy {
         if (site.isUsingWpComRestApi) {
-            PostListDescriptorForRestSite(site)
+            PostListDescriptorForRestSite(site, pageSize = 20)
         } else {
-            PostListDescriptorForXmlRpcSite(site)
+            PostListDescriptorForXmlRpcSite(site, pageSize = 20)
         }
     }
     private val postListAdapter: PostListAdapter by lazy {
@@ -288,7 +289,7 @@ class PostListFragment : Fragment(),
         ActivityLauncher.addNewPostForResult(nonNullActivity, site, false)
     }
 
-    private fun updateEmptyViewForListManagerChange(listManager: ListManager<PostModel>) {
+    private fun updateEmptyViewForListManagerChange(listManager: ListManager<PostModel, PostListMarker>) {
         if (!listManager.isFetchingFirstPage) {
             if (listManager.size == 0) {
                 val messageType = if (NetworkUtils.isNetworkAvailable(nonNullActivity)) {
@@ -789,8 +790,12 @@ class PostListFragment : Fragment(),
      * [ListStore] requires an instance of [ListItemDataSource] which is a way for us to tell [ListStore] and
      * [ListManager] how to take certain actions or how to access certain data.
      */
-    private suspend fun getListDataFromStore(listDescriptor: ListDescriptor): ListManager<PostModel> =
-            listStore.getListManager(listDescriptor, object : ListItemDataSource<PostModel> {
+    private suspend fun getListDataFromStore(listDescriptor: ListDescriptor): ListManager<PostModel, PostListMarker> =
+            listStore.getListManager(listDescriptor, object : ListItemDataSource<PostModel, PostListMarker> {
+                override fun getMarker(markerId: Int): PostListMarker {
+                    return PostListMarker.fromId(markerId)!! // TODO
+                }
+
                 /**
                  * Tells [ListStore] how to fetch a post from remote for the given list descriptor and remote post id
                  */
@@ -867,7 +872,7 @@ class PostListFragment : Fragment(),
      * not limited to, updating the swipe to refresh layout, loading progress bar and updating the empty views.
      */
     private suspend fun updateListManager(
-        listManager: ListManager<PostModel>,
+        listManager: ListManager<PostModel, PostListMarker>,
         diffResult: DiffResult,
         shouldRefreshFirstPageAfterUpdate: Boolean
     ) = withContext(Dispatchers.Main) {
@@ -903,8 +908,8 @@ class PostListFragment : Fragment(),
      * two [ListManager]s.
      */
     private suspend fun calculateDiff(
-        oldListManager: ListManager<PostModel>?,
-        newListManager: ListManager<PostModel>
+        oldListManager: ListManager<PostModel, PostListMarker>?,
+        newListManager: ListManager<PostModel, PostListMarker>
     ): DiffResult = withContext(Dispatchers.Default) {
         val callback = ListManagerDiffCallback(
                 oldListManager = oldListManager,

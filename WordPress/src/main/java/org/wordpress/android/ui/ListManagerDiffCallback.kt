@@ -1,7 +1,10 @@
 package org.wordpress.android.ui
 
 import android.support.v7.util.DiffUtil
+import org.wordpress.android.fluxc.model.list.ItemOrMarker.Item
+import org.wordpress.android.fluxc.model.list.ItemOrMarker.Marker
 import org.wordpress.android.fluxc.model.list.ListManager
+import org.wordpress.android.fluxc.store.PostListMarker
 
 /**
  * A helper class which can be used to compare two [ListManager]s.
@@ -14,9 +17,9 @@ import org.wordpress.android.fluxc.model.list.ListManager
  * function will be triggered for items who return true for [areItemsTheSame] and actual content comparison should be
  * made depending on the view they are used in.
  */
-class ListManagerDiffCallback<T>(
-    private val oldListManager: ListManager<T>?,
-    private val newListManager: ListManager<T>,
+class ListManagerDiffCallback<T, M>(
+    private val oldListManager: ListManager<T, M>?,
+    private val newListManager: ListManager<T, M>,
     private val areItemsTheSame: (T, T) -> Boolean,
     private val areContentsTheSame: (T, T) -> Boolean
 ) : DiffUtil.Callback() {
@@ -29,44 +32,61 @@ class ListManagerDiffCallback<T>(
     }
 
     override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
+        // We shouldn't fetch items or load more pages prematurely when we are just trying to compare them
+        val oldOne = oldListManager?.getItem(
+                position = oldItemPosition,
+                shouldFetchIfNull = false,
+                shouldLoadMoreIfNecessary = false
+        )
+        val newOne = newListManager.getItem(
+                position = newItemPosition,
+                shouldFetchIfNull = false,
+                shouldLoadMoreIfNecessary = false
+        )
+        if (oldOne is Marker<*> && newOne is Marker<*>) {
+            return (oldOne.marker as PostListMarker).id == (newOne.marker as PostListMarker).id
+        }
+        if (oldOne is Marker<*> || newOne is Marker<*>) {
+            return false
+        }
         val oldRemoteItemId = oldListManager?.getRemoteItemId(oldItemPosition)
         val newRemoteItemId = newListManager.getRemoteItemId(newItemPosition)
         if (oldRemoteItemId != null && newRemoteItemId != null) {
             // both remote items
             return oldRemoteItemId == newRemoteItemId
         }
-        // We shouldn't fetch items or load more pages prematurely when we are just trying to compare them
-        val oldItem = oldListManager?.getItem(
-                position = oldItemPosition,
-                shouldFetchIfNull = false,
-                shouldLoadMoreIfNecessary = false
-        )
-        val newItem = newListManager.getItem(
-                position = newItemPosition,
-                shouldFetchIfNull = false,
-                shouldLoadMoreIfNecessary = false
-        )
+        val oldItem = (oldOne as Item<*>).value
+        val newItem = (newOne as Item<*>).value
         if (oldItem == null || newItem == null) {
             // One remote and one local item. The remote item is not fetched yet, it can't be the same items.
             return false
         }
         // Either one remote item and one local item or both local items. In either case, we'll let the caller
         // decide how to compare the two. In most cases, a local id comparison should be enough.
-        return areItemsTheSame(oldItem, newItem)
+        // TODO: can't erase the type! sigh..
+        return areItemsTheSame(oldItem as T, newItem as T)
     }
 
     override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
         // We shouldn't fetch items or load more pages prematurely when we are just trying to compare them
-        val oldItem = oldListManager?.getItem(
+        val oldOne = oldListManager?.getItem(
                 position = oldItemPosition,
                 shouldFetchIfNull = false,
                 shouldLoadMoreIfNecessary = false
         )
-        val newItem = newListManager.getItem(
+        val newOne = newListManager.getItem(
                 position = newItemPosition,
                 shouldFetchIfNull = false,
                 shouldLoadMoreIfNecessary = false
         )
+        if (oldOne is Marker<*> && newOne is Marker<*>) {
+            return (oldOne.marker as PostListMarker).id == (newOne.marker as PostListMarker).id
+        }
+        if (oldOne is Marker<*> || newOne is Marker<*>) {
+            return false
+        }
+        val oldItem = (oldOne as Item<*>).value
+        val newItem = (newOne as Item<*>).value
         // If two items are null, they are the same for our intends and purposes
         if (oldItem == null && newItem == null) {
             return true
@@ -75,6 +95,7 @@ class ListManagerDiffCallback<T>(
         if (oldItem == null || newItem == null) {
             return false
         }
-        return areContentsTheSame(oldItem, newItem)
+        // TODO: can't erase the type! sigh..
+        return areContentsTheSame(oldItem as T, newItem as T)
     }
 }
