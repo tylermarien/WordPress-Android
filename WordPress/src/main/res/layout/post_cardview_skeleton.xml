@@ -3,6 +3,7 @@
 <android.support.v7.widget.CardView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:card_view="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     xmlns:wp="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -25,11 +26,11 @@
                 android:layout_marginStart="@dimen/margin_extra_large"
                 android:orientation="vertical">
 
-                <View
-                    android:layout_width="@dimen/post_list_row_skeleton_view_title_width"
-                    android:layout_height="@dimen/post_list_row_skeleton_view_title_height"
+                <org.wordpress.android.widgets.WPTextView
+                    android:id="@+id/text_title"
+                    style="@style/ReaderTextView.Post.Title"
                     android:layout_marginTop="@dimen/margin_extra_large"
-                    android:background="@color/light_gray"/>
+                    tools:text="text_title"/>
 
                 <View
                     android:layout_width="match_parent"

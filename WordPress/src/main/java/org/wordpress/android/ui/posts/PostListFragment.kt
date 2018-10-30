@@ -40,9 +40,11 @@ import org.wordpress.android.fluxc.model.SiteModel
 import org.wordpress.android.fluxc.model.list.ListDescriptor
 import org.wordpress.android.fluxc.model.list.ListItemDataSource
 import org.wordpress.android.fluxc.model.list.ListManager
+import org.wordpress.android.fluxc.model.list.ListManagerItem.LocalItem
 import org.wordpress.android.fluxc.model.list.PostListDescriptor
 import org.wordpress.android.fluxc.model.list.PostListDescriptor.PostListDescriptorForRestSite
 import org.wordpress.android.fluxc.model.list.PostListDescriptor.PostListDescriptorForXmlRpcSite
+import org.wordpress.android.fluxc.model.list.PostSummaryModel
 import org.wordpress.android.fluxc.store.ListStore
 import org.wordpress.android.fluxc.store.ListStore.ListErrorType
 import org.wordpress.android.fluxc.store.ListStore.OnListChanged
@@ -90,6 +92,8 @@ private const val KEY_TRASHED_POST_LOCAL_IDS = "KEY_TRASHED_POST_LOCAL_IDS"
 private const val KEY_TRASHED_POST_REMOTE_IDS = "KEY_TRASHED_POST_REMOTE_IDS"
 private const val KEY_UPLOADED_REMOTE_POST_IDS = "KEY_UPLOADED_REMOTE_POST_IDS"
 
+typealias PostListManager = ListManager<PostModel, PostSummaryModel>
+
 class PostListFragment : Fragment(),
         PostListAdapter.OnPostSelectedListener,
         PostListAdapter.OnPostButtonClickListener {
@@ -117,7 +121,7 @@ class PostListFragment : Fragment(),
     @Inject internal lateinit var listStore: ListStore
     @Inject internal lateinit var dispatcher: Dispatcher
 
-    private var listManager: ListManager<PostModel>? = null
+    private var listManager: PostListManager? = null
     private var refreshListDataJob: Job? = null
     private val listDescriptor: PostListDescriptor by lazy {
         if (site.isUsingWpComRestApi) {
@@ -288,7 +292,7 @@ class PostListFragment : Fragment(),
         ActivityLauncher.addNewPostForResult(nonNullActivity, site, false)
     }
 
-    private fun updateEmptyViewForListManagerChange(listManager: ListManager<PostModel>) {
+    private fun updateEmptyViewForListManagerChange(listManager: PostListManager) {
         if (!listManager.isFetchingFirstPage) {
             if (listManager.size == 0) {
                 val messageType = if (NetworkUtils.isNetworkAvailable(nonNullActivity)) {
@@ -789,8 +793,8 @@ class PostListFragment : Fragment(),
      * [ListStore] requires an instance of [ListItemDataSource] which is a way for us to tell [ListStore] and
      * [ListManager] how to take certain actions or how to access certain data.
      */
-    private suspend fun getListDataFromStore(listDescriptor: ListDescriptor): ListManager<PostModel> =
-            listStore.getListManager(listDescriptor, object : ListItemDataSource<PostModel> {
+    private suspend fun getListDataFromStore(listDescriptor: ListDescriptor): PostListManager =
+            listStore.getListManager(listDescriptor, object : ListItemDataSource<PostModel, PostSummaryModel> {
                 /**
                  * Tells [ListStore] how to fetch a post from remote for the given list descriptor and remote post id
                  */
@@ -819,15 +823,28 @@ class PostListFragment : Fragment(),
                 }
 
                 /**
+                 * Tells [ListStore] how to get post summaries from [PostStore] for the given remote post ids and site
+                 */
+                override fun getItemSummary(
+                    listDescriptor: ListDescriptor,
+                    remoteItemIds: List<Long>
+                ): Map<Long, PostSummaryModel> {
+                    return postStore.getPostSummariesByRemotePostIds(remoteItemIds, site)
+                }
+
+                /**
                  * Tells [ListStore] which local drafts should be included in the list. Since [ListStore] deals with
                  * remote items, it needs our help to show local data.
                  */
-                override fun localItems(listDescriptor: ListDescriptor): List<PostModel>? {
+                override fun localItems(listDescriptor: ListDescriptor): List<LocalItem<PostModel, PostSummaryModel>>? {
                     if (listDescriptor is PostListDescriptor) {
                         // We should filter out the trashed posts from local drafts since they should be hidden
                         val trashedLocalPostIds = trashedPostIds.map { it.first }
                         return postStore.getLocalPostsForDescriptor(listDescriptor)
+                                .asSequence()
                                 .filter { !trashedLocalPostIds.contains(it.id) }
+                                .map { LocalItem(it, PostSummaryModel(it.localSiteId, it.remotePostId, it.title)) }
+                                .toList()
                     }
                     return null
                 }
@@ -867,7 +884,7 @@ class PostListFragment : Fragment(),
      * not limited to, updating the swipe to refresh layout, loading progress bar and updating the empty views.
      */
     private suspend fun updateListManager(
-        listManager: ListManager<PostModel>,
+        listManager: PostListManager,
         diffResult: DiffResult,
         shouldRefreshFirstPageAfterUpdate: Boolean
     ) = withContext(Dispatchers.Main) {
@@ -903,8 +920,8 @@ class PostListFragment : Fragment(),
      * two [ListManager]s.
      */
     private suspend fun calculateDiff(
-        oldListManager: ListManager<PostModel>?,
-        newListManager: ListManager<PostModel>
+        oldListManager: PostListManager?,
+        newListManager: PostListManager
     ): DiffResult = withContext(Dispatchers.Default) {
         val callback = ListManagerDiffCallback(
                 oldListManager = oldListManager,
