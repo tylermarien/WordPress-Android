@@ -1,9 +1,13 @@
 package org.wordpress.android.util.image
 
+import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.support.annotation.DrawableRes
+import android.support.v4.app.FragmentActivity
+import android.support.v7.content.res.AppCompatResources
 import android.text.TextUtils
 import android.widget.ImageView
 import android.widget.ImageView.ScaleType
@@ -14,6 +18,7 @@ import com.bumptech.glide.load.engine.GlideException
 import com.bumptech.glide.request.target.BaseTarget
 import com.bumptech.glide.request.target.Target
 import com.bumptech.glide.request.target.ViewTarget
+import com.bumptech.glide.signature.ObjectKey
 import org.wordpress.android.WordPress
 import org.wordpress.android.modules.GlideApp
 import org.wordpress.android.modules.GlideRequest
@@ -32,15 +37,38 @@ class ImageManager @Inject constructor(val placeholderManager: ImagePlaceholderM
     }
 
     /**
+     * Return true if this [Context] is available.
+     * Availability is defined as the following:
+     * + [Context] is not null
+     * + [Context] is not destroyed (tested with [FragmentActivity.isDestroyed] or [Activity.isDestroyed])
+     */
+    private fun Context?.isAvailable(): Boolean {
+        if (this == null) {
+            return false
+        } else if (this !is Application) {
+            if (this is FragmentActivity) {
+                return !this.isDestroyed
+            } else if (this is Activity) {
+                return !this.isDestroyed
+            }
+        }
+        return true
+    }
+
+    /**
      * Loads an image from the "imgUrl" into the ImageView. Adds a placeholder and an error placeholder depending
      * on the ImageType.
+     *
+     * If no URL is provided, it only loads the placeholder
      */
     @JvmOverloads
-    fun load(imageView: ImageView, imageType: ImageType, imgUrl: String, scaleType: ImageView.ScaleType = CENTER) {
-        GlideApp.with(imageView.context)
+    fun load(imageView: ImageView, imageType: ImageType, imgUrl: String = "", scaleType: ImageView.ScaleType = CENTER) {
+        val context = imageView.context
+        if (!context.isAvailable()) return
+        GlideApp.with(context)
                 .load(imgUrl)
-                .addFallback(imageType)
-                .addPlaceholder(imageType)
+                .addFallback(context, imageType)
+                .addPlaceholder(context, imageType)
                 .applyScaleType(scaleType)
                 .into(imageView)
                 .clearOnDetach()
@@ -50,12 +78,23 @@ class ImageManager @Inject constructor(val placeholderManager: ImagePlaceholderM
      * Loads an image from the "imgUrl" into the ImageView and applies circle transformation. Adds placeholder and
      * error placeholder depending on the ImageType.
      */
-    fun loadIntoCircle(imageView: ImageView, imageType: ImageType, imgUrl: String) {
-        GlideApp.with(imageView.context)
+    @JvmOverloads
+    fun loadIntoCircle(
+        imageView: ImageView,
+        imageType: ImageType,
+        imgUrl: String,
+        requestListener: RequestListener<Drawable>? = null,
+        version: Int? = null
+    ) {
+        val context = imageView.context
+        if (!context.isAvailable()) return
+        GlideApp.with(context)
                 .load(imgUrl)
-                .addFallback(imageType)
-                .addPlaceholder(imageType)
+                .addFallback(context, imageType)
+                .addPlaceholder(context, imageType)
                 .circleCrop()
+                .attachRequestListener(requestListener)
+                .addSignature(version)
                 .into(imageView)
                 .clearOnDetach()
     }
@@ -75,11 +114,13 @@ class ImageManager @Inject constructor(val placeholderManager: ImagePlaceholderM
         thumbnailUrl: String? = null,
         requestListener: RequestListener<Drawable>
     ) {
-        GlideApp.with(imageView.context)
+        val context = imageView.context
+        if (!context.isAvailable()) return
+        GlideApp.with(context)
                 .load(imgUrl)
-                .addFallback(imageType)
-                .addPlaceholder(imageType)
-                .addThumbnail(imageView.context, thumbnailUrl, requestListener)
+                .addFallback(context, imageType)
+                .addPlaceholder(context, imageType)
+                .addThumbnail(context, thumbnailUrl, requestListener)
                 .attachRequestListener(requestListener)
                 .into(imageView)
                 .clearOnDetach()
@@ -90,7 +131,9 @@ class ImageManager @Inject constructor(val placeholderManager: ImagePlaceholderM
      */
     @JvmOverloads
     fun load(imageView: ImageView, bitmap: Bitmap, scaleType: ImageView.ScaleType = CENTER) {
-        GlideApp.with(imageView.context)
+        val context = imageView.context
+        if (!context.isAvailable()) return
+        GlideApp.with(context)
                 .load(bitmap)
                 .applyScaleType(scaleType)
                 .into(imageView)
@@ -102,7 +145,9 @@ class ImageManager @Inject constructor(val placeholderManager: ImagePlaceholderM
      */
     @JvmOverloads
     fun load(imageView: ImageView, drawable: Drawable, scaleType: ImageView.ScaleType = CENTER) {
-        GlideApp.with(imageView.context)
+        val context = imageView.context
+        if (!context.isAvailable()) return
+        GlideApp.with(context)
                 .load(drawable)
                 .applyScaleType(scaleType)
                 .into(imageView)
@@ -114,7 +159,9 @@ class ImageManager @Inject constructor(val placeholderManager: ImagePlaceholderM
      */
     @JvmOverloads
     fun load(imageView: ImageView, @DrawableRes resourceId: Int, scaleType: ImageView.ScaleType = CENTER) {
-        GlideApp.with(imageView.context)
+        val context = imageView.context
+        if (!context.isAvailable()) return
+        GlideApp.with(context)
                 .load(resourceId)
                 .applyScaleType(scaleType)
                 .into(imageView)
@@ -129,10 +176,12 @@ class ImageManager @Inject constructor(val placeholderManager: ImagePlaceholderM
      * when you need to load an image into an ImageView).
      */
     fun loadIntoCustomTarget(viewTarget: ViewTarget<TextView, Drawable>, imageType: ImageType, imgUrl: String) {
-        GlideApp.with(WordPress.getContext())
+        val context = WordPress.getContext()
+        if (!context.isAvailable()) return
+        GlideApp.with(context)
                 .load(imgUrl)
-                .addFallback(imageType)
-                .addPlaceholder(imageType)
+                .addFallback(context, imageType)
+                .addPlaceholder(context, imageType)
                 .into(viewTarget)
                 .clearOnDetach()
     }
@@ -149,6 +198,7 @@ class ImageManager @Inject constructor(val placeholderManager: ImagePlaceholderM
         imgUrl: String,
         scaleType: ImageView.ScaleType = CENTER
     ) {
+        if (!context.isAvailable()) return
         GlideApp.with(context)
                 .asBitmap()
                 .load(imgUrl)
@@ -190,15 +240,40 @@ class ImageManager @Inject constructor(val placeholderManager: ImagePlaceholderM
         }
     }
 
-    private fun <T : Any> GlideRequest<T>.addPlaceholder(imageType: ImageType): GlideRequest<T> {
+    private fun <T : Any> GlideRequest<T>.addPlaceholder(context: Context, imageType: ImageType): GlideRequest<T> {
         val placeholderImageRes = placeholderManager.getPlaceholderResource(imageType)
-        return if (placeholderImageRes == null) this else this.placeholder(placeholderImageRes)
+        return if (placeholderImageRes == null) {
+            this
+        } else {
+            this.placeholder(loadDrawable(context, placeholderImageRes))
+        }
     }
 
-    private fun <T : Any> GlideRequest<T>.addFallback(imageType: ImageType): GlideRequest<T> {
+    private fun <T : Any> GlideRequest<T>.addFallback(context: Context, imageType: ImageType): GlideRequest<T> {
         val errorImageRes = placeholderManager.getErrorResource(imageType)
-        return if (errorImageRes == null) this else this.error(errorImageRes)
+        return if (errorImageRes == null) {
+            this
+        } else {
+            this.error(loadDrawable(context, errorImageRes))
+        }
     }
+
+    /**
+     * Changing the signature invalidates cache.
+     */
+    private fun <T : Any> GlideRequest<T>.addSignature(signature: Int?): GlideRequest<T> {
+        return if (signature == null) {
+            this
+        } else {
+            this.signature(ObjectKey(signature))
+        }
+    }
+
+    /**
+     * Load drawable using AppCompatResource to prevent the app from crashing when loading vector drawables on api < 21.
+     * May be removed when https://github.com/bumptech/glide/issues/3086 is fixed.
+     */
+    fun loadDrawable(context: Context, imgRes: Int) = AppCompatResources.getDrawable(context, imgRes)
 
     private fun GlideRequest<Drawable>.addThumbnail(
         context: Context,

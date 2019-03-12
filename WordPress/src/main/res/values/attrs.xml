@@ -9,6 +9,7 @@
         <attr name="maxSummaryLines" format="integer" />
         <attr name="longClickHint" />
         <attr name="dialogMessage" format="string" />
+        <attr name="iconTint" format="color" />
     </declare-styleable>
 
     <!-- DetailListPreference attributes -->
@@ -115,14 +116,6 @@
         <attr name="wpSummary" format="string" />
         <attr name="wpShowDivider" format="boolean" />
         <attr name="wpTextDialogSubtitle" format="string" />
-    </declare-styleable>
-
-    <!--
-        WPNetworkImageView
-    -->
-    <declare-styleable name="wpNetworkImageView">
-        <attr name="wpDefaultImageDrawable" format="reference"/>
-        <attr name="wpErrorImageDrawable" format="reference"/>
     </declare-styleable>
 
     <!--

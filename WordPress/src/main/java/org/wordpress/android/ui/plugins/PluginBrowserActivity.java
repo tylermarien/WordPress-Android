@@ -37,16 +37,17 @@ import org.wordpress.android.fluxc.model.plugin.ImmutablePluginModel;
 import org.wordpress.android.models.networkresource.ListState;
 import org.wordpress.android.ui.ActivityLauncher;
 import org.wordpress.android.util.ActivityUtils;
-import org.wordpress.android.util.AnalyticsUtils;
 import org.wordpress.android.util.AniUtils;
+import org.wordpress.android.util.ColorUtils;
 import org.wordpress.android.util.LocaleManager;
 import org.wordpress.android.util.NetworkUtils;
 import org.wordpress.android.util.StringUtils;
 import org.wordpress.android.util.ToastUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
 import org.wordpress.android.util.image.ImageManager;
 import org.wordpress.android.util.image.ImageType;
-import org.wordpress.android.viewmodel.PluginBrowserViewModel;
-import org.wordpress.android.viewmodel.PluginBrowserViewModel.PluginListType;
+import org.wordpress.android.viewmodel.plugins.PluginBrowserViewModel;
+import org.wordpress.android.viewmodel.plugins.PluginBrowserViewModel.PluginListType;
 
 import java.util.HashMap;
 import java.util.List;
@@ -426,20 +427,20 @@ public class PluginBrowserActivity extends AppCompatActivity
                 } else if (PluginUtils.isUpdateAvailable(plugin)) {
                     textResId = R.string.plugin_needs_update;
                     colorResId = R.color.alert_yellow;
-                    drawableResId = R.drawable.plugin_update_available_icon;
+                    drawableResId = R.drawable.ic_sync_white_24dp;
                 } else if (plugin.isActive()) {
                     textResId = R.string.plugin_active;
                     colorResId = R.color.alert_green;
-                    drawableResId = R.drawable.ic_checkmark_green_24dp;
+                    drawableResId = R.drawable.ic_checkmark_white_24dp;
                 } else {
                     textResId = R.string.plugin_inactive;
                     colorResId = R.color.grey;
-                    drawableResId = R.drawable.ic_cross_grey_600_24dp;
+                    drawableResId = R.drawable.ic_cross_white_24dp;
                 }
                 holder.mStatusText.setText(textResId);
                 holder.mStatusText.setTextColor(getResources().getColor(colorResId));
                 holder.mStatusIcon.setVisibility(isAutoManaged ? View.GONE : View.VISIBLE);
-                holder.mStatusIcon.setImageResource(drawableResId);
+                ColorUtils.INSTANCE.setImageResourceWithTint(holder.mStatusIcon, drawableResId, colorResId);
                 holder.mStatusContainer.setVisibility(View.VISIBLE);
                 holder.mRatingBar.setVisibility(View.GONE);
             } else {

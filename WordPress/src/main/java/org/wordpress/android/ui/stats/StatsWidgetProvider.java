@@ -27,12 +27,14 @@ import org.wordpress.android.ui.main.WPMainActivity;
 import org.wordpress.android.ui.prefs.AppPrefs;
 import org.wordpress.android.ui.stats.exceptions.StatsError;
 import org.wordpress.android.ui.stats.models.VisitModel;
+import org.wordpress.android.ui.stats.refresh.StatsActivity;
 import org.wordpress.android.ui.stats.service.StatsService;
 import org.wordpress.android.ui.stats.service.StatsServiceLogic;
 import org.wordpress.android.ui.stats.service.StatsServiceStarter;
-import org.wordpress.android.util.AnalyticsUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
+import org.wordpress.android.util.FormatUtils;
 import org.wordpress.android.util.NetworkUtils;
 import org.wordpress.android.util.SiteUtils;
 
@@ -85,7 +87,13 @@ public class StatsWidgetProvider extends AppWidgetProvider {
     }
 
     private static void updateTabValue(Context context, RemoteViews remoteViews, int viewId, String text) {
-        remoteViews.setTextViewText(viewId, text);
+        int value = 0;
+        try {
+            value = Integer.parseInt(text);
+        } catch (NumberFormatException e) {
+            AppLog.e(T.STATS, e);
+        }
+        remoteViews.setTextViewText(viewId, FormatUtils.formatDecimal(value));
         if (text.equals("0")) {
             remoteViews.setTextColor(viewId, context.getResources().getColor(R.color.grey));
         }
@@ -122,8 +130,8 @@ public class StatsWidgetProvider extends AppWidgetProvider {
 
             Intent intent = new Intent(context, StatsActivity.class);
             intent.putExtra(WordPress.SITE, site);
-            intent.putExtra(StatsActivity.ARG_LAUNCHED_FROM, StatsActivity.StatsLaunchedFrom.STATS_WIDGET);
-            intent.putExtra(StatsActivity.ARG_DESIRED_TIMEFRAME, StatsTimeframe.DAY);
+            intent.putExtra(OldStatsActivity.ARG_LAUNCHED_FROM, OldStatsActivity.StatsLaunchedFrom.STATS_WIDGET);
+            intent.putExtra(OldStatsActivity.ARG_DESIRED_TIMEFRAME, StatsTimeframe.DAY);
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
             PendingIntent pendingIntent = PendingIntent.getActivity(context, site.getId(), intent, PendingIntent
                     .FLAG_UPDATE_CURRENT);

@@ -1,7 +1,8 @@
 package org.wordpress.android.ui.main;
 
 import android.app.Activity;
-import android.app.Fragment;
+import android.app.Dialog;
+import android.arch.lifecycle.Observer;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -11,17 +12,24 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.v4.app.Fragment;
 import android.support.v4.app.RemoteInput;
 import android.support.v7.app.AppCompatActivity;
 import android.text.TextUtils;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.TextView;
+
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
 
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import org.jetbrains.annotations.NotNull;
 import org.wordpress.android.R;
 import org.wordpress.android.WordPress;
 import org.wordpress.android.analytics.AnalyticsTracker;
+import org.wordpress.android.analytics.AnalyticsTracker.Stat;
 import org.wordpress.android.fluxc.Dispatcher;
 import org.wordpress.android.fluxc.generated.AccountActionBuilder;
 import org.wordpress.android.fluxc.generated.SiteActionBuilder;
@@ -35,7 +43,11 @@ import org.wordpress.android.fluxc.store.AccountStore.OnAuthenticationChanged;
 import org.wordpress.android.fluxc.store.AccountStore.UpdateTokenPayload;
 import org.wordpress.android.fluxc.store.PostStore;
 import org.wordpress.android.fluxc.store.PostStore.OnPostUploaded;
+import org.wordpress.android.fluxc.store.QuickStartStore;
+import org.wordpress.android.fluxc.store.QuickStartStore.QuickStartTask;
 import org.wordpress.android.fluxc.store.SiteStore;
+import org.wordpress.android.fluxc.store.SiteStore.CompleteQuickStartPayload;
+import org.wordpress.android.fluxc.store.SiteStore.OnQuickStartCompleted;
 import org.wordpress.android.fluxc.store.SiteStore.OnSiteChanged;
 import org.wordpress.android.fluxc.store.SiteStore.OnSiteRemoved;
 import org.wordpress.android.login.LoginAnalyticsListener;
@@ -54,6 +66,7 @@ import org.wordpress.android.ui.accounts.LoginActivity;
 import org.wordpress.android.ui.accounts.SignupEpilogueActivity;
 import org.wordpress.android.ui.accounts.SiteCreationActivity;
 import org.wordpress.android.ui.main.WPMainNavigationView.OnPageListener;
+import org.wordpress.android.ui.news.NewsManager;
 import org.wordpress.android.ui.notifications.NotificationEvents;
 import org.wordpress.android.ui.notifications.NotificationsListFragment;
 import org.wordpress.android.ui.notifications.adapters.NotesAdapter;
@@ -62,15 +75,17 @@ import org.wordpress.android.ui.notifications.utils.NotificationsActions;
 import org.wordpress.android.ui.notifications.utils.NotificationsUtils;
 import org.wordpress.android.ui.notifications.utils.PendingDraftsNotificationsUtils;
 import org.wordpress.android.ui.posts.BasicFragmentDialog.BasicDialogNegativeClickInterface;
+import org.wordpress.android.ui.posts.BasicFragmentDialog.BasicDialogOnDismissByOutsideTouchInterface;
 import org.wordpress.android.ui.posts.BasicFragmentDialog.BasicDialogPositiveClickInterface;
 import org.wordpress.android.ui.posts.EditPostActivity;
+import org.wordpress.android.ui.posts.PromoDialog;
+import org.wordpress.android.ui.posts.PromoDialog.PromoDialogClickInterface;
 import org.wordpress.android.ui.prefs.AppPrefs;
 import org.wordpress.android.ui.prefs.AppSettingsFragment;
 import org.wordpress.android.ui.prefs.SiteSettingsFragment;
 import org.wordpress.android.ui.reader.ReaderPostListFragment;
 import org.wordpress.android.ui.reader.ReaderPostPagerActivity;
 import org.wordpress.android.ui.uploads.UploadUtils;
-import org.wordpress.android.util.AnalyticsUtils;
 import org.wordpress.android.util.AniUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
@@ -80,9 +95,14 @@ import org.wordpress.android.util.FluxCUtils;
 import org.wordpress.android.util.LocaleManager;
 import org.wordpress.android.util.NetworkUtils;
 import org.wordpress.android.util.ProfilingUtils;
+import org.wordpress.android.util.QuickStartUtils;
 import org.wordpress.android.util.ShortcutUtils;
 import org.wordpress.android.util.ToastUtils;
 import org.wordpress.android.util.WPActivityUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
+import org.wordpress.android.util.analytics.service.InstallationReferrerServiceStarter;
+import org.wordpress.android.widgets.AppRatingDialog;
+import org.wordpress.android.widgets.WPDialogSnackbar;
 
 import java.util.List;
 
@@ -91,6 +111,7 @@ import javax.inject.Inject;
 import de.greenrobot.event.EventBus;
 
 import static org.wordpress.android.WordPress.SITE;
+import static org.wordpress.android.fluxc.store.SiteStore.CompleteQuickStartVariant.NEXT_STEPS;
 import static org.wordpress.android.ui.JetpackConnectionSource.NOTIFICATIONS;
 import static org.wordpress.android.ui.main.WPMainNavigationView.PAGE_ME;
 import static org.wordpress.android.ui.main.WPMainNavigationView.PAGE_MY_SITE;
@@ -100,10 +121,15 @@ import static org.wordpress.android.ui.main.WPMainNavigationView.PAGE_READER;
 /**
  * Main activity which hosts sites, reader, me and notifications pages
  */
-public class WPMainActivity extends AppCompatActivity
-        implements OnPageListener, BottomNavController, BasicDialogPositiveClickInterface,
-        BasicDialogNegativeClickInterface {
+public class WPMainActivity extends AppCompatActivity implements
+        OnPageListener,
+        BottomNavController,
+        BasicDialogPositiveClickInterface,
+        BasicDialogNegativeClickInterface,
+        BasicDialogOnDismissByOutsideTouchInterface,
+        PromoDialogClickInterface {
     public static final String ARG_CONTINUE_JETPACK_CONNECT = "ARG_CONTINUE_JETPACK_CONNECT";
+    public static final String ARG_CREATE_SITE = "ARG_CREATE_SITE";
     public static final String ARG_DO_LOGIN_UPDATE = "ARG_DO_LOGIN_UPDATE";
     public static final String ARG_IS_MAGIC_LINK_LOGIN = "ARG_IS_MAGIC_LINK_LOGIN";
     public static final String ARG_IS_MAGIC_LINK_SIGNUP = "ARG_IS_MAGIC_LINK_SIGNUP";
@@ -115,10 +141,15 @@ public class WPMainActivity extends AppCompatActivity
     public static final String ARG_OPEN_PAGE = "open_page";
     public static final String ARG_NOTIFICATIONS = "show_notifications";
     public static final String ARG_READER = "show_reader";
+    public static final String ARG_EDITOR = "show_editor";
     public static final String ARG_ME = "show_me";
     public static final String ARG_SHOW_ZENDESK_NOTIFICATIONS = "show_zendesk_notifications";
 
+    // Track the first `onResume` event for the current session so we can use it for Analytics tracking
+    private static boolean mFirstResume = true;
+
     private WPMainNavigationView mBottomNav;
+    private WPDialogSnackbar mQuickStartSnackbar;
 
     private TextView mConnectionBar;
     private JetpackConnectionSource mJetpackConnectSource;
@@ -134,6 +165,8 @@ public class WPMainActivity extends AppCompatActivity
     @Inject protected LoginAnalyticsListener mLoginAnalyticsListener;
     @Inject ShortcutsNavigator mShortcutsNavigator;
     @Inject ShortcutUtils mShortcutUtils;
+    @Inject NewsManager mNewsManager;
+    @Inject QuickStartStore mQuickStartStore;
 
     /*
      * fragments implement this if their contents can be scrolled, called when user
@@ -165,7 +198,7 @@ public class WPMainActivity extends AppCompatActivity
         setContentView(R.layout.main_activity);
 
         mBottomNav = findViewById(R.id.bottom_navigation);
-        mBottomNav.init(getFragmentManager(), this);
+        mBottomNav.init(getSupportFragmentManager(), this);
 
         mConnectionBar = findViewById(R.id.connection_bar);
         mConnectionBar.setOnClickListener(new View.OnClickListener() {
@@ -188,8 +221,14 @@ public class WPMainActivity extends AppCompatActivity
         mIsMagicLinkSignup = getIntent().getBooleanExtra(ARG_IS_MAGIC_LINK_SIGNUP, false);
         mJetpackConnectSource = (JetpackConnectionSource) getIntent().getSerializableExtra(ARG_JETPACK_CONNECT_SOURCE);
         String authTokenToSet = null;
+        registeNewsItemObserver();
+        boolean canShowAppRatingPrompt = savedInstanceState != null;
 
         if (savedInstanceState == null) {
+            if (!AppPrefs.isInstallationReferrerObtained()) {
+                InstallationReferrerServiceStarter.startService(this, null);
+            }
+
             if (FluxCUtils.isSignedInWPComOrHasWPOrgSite(mAccountStore, mSiteStore)) {
                 // open note detail if activity called from a push
                 boolean openedFromPush = (getIntent() != null && getIntent().getBooleanExtra(ARG_OPENED_FROM_PUSH,
@@ -197,6 +236,8 @@ public class WPMainActivity extends AppCompatActivity
                 boolean openedFromShortcut = (getIntent() != null && getIntent().getStringExtra(
                         ShortcutsNavigator.ACTION_OPEN_SHORTCUT) != null);
                 boolean openRequestedPage = (getIntent() != null && getIntent().hasExtra(ARG_OPEN_PAGE));
+                boolean isQuickStartRequestedFromPush = (getIntent() != null && getIntent()
+                        .getBooleanExtra(MySiteFragment.ARG_QUICK_START_TASK, false));
                 boolean openZendeskTicketsFromPush = (getIntent() != null && getIntent()
                         .getBooleanExtra(ARG_SHOW_ZENDESK_NOTIFICATIONS, false));
 
@@ -217,6 +258,10 @@ public class WPMainActivity extends AppCompatActivity
                             ShortcutsNavigator.ACTION_OPEN_SHORTCUT), this, getSelectedSite());
                 } else if (openRequestedPage) {
                     handleOpenPageIntent(getIntent());
+                } else if (isQuickStartRequestedFromPush) {
+                    // when app is opened from Quick Start reminder switch to MySite fragment
+                    mBottomNav.setCurrentPosition(PAGE_MY_SITE);
+                    AnalyticsTracker.track(Stat.QUICK_START_NOTIFICATION_TAPPED);
                 } else {
                     if (mIsMagicLinkLogin) {
                         if (mAccountStore.hasAccessToken()) {
@@ -230,6 +275,8 @@ public class WPMainActivity extends AppCompatActivity
                         && getIntent().getExtras().getBoolean(ARG_CONTINUE_JETPACK_CONNECT, false)) {
                         JetpackConnectionWebViewActivity.startJetpackConnectionFlow(this, NOTIFICATIONS,
                                 (SiteModel) getIntent().getSerializableExtra(SITE), mAccountStore.hasAccessToken());
+                    } else {
+                        canShowAppRatingPrompt = true;
                     }
                 }
             } else {
@@ -257,15 +304,52 @@ public class WPMainActivity extends AppCompatActivity
             UpdateTokenPayload payload = new UpdateTokenPayload(authTokenToSet);
             mDispatcher.dispatch(AccountActionBuilder.newUpdateAccessTokenAction(payload));
         } else if (getIntent().getBooleanExtra(ARG_SHOW_LOGIN_EPILOGUE, false) && savedInstanceState == null) {
+            canShowAppRatingPrompt = false;
             ActivityLauncher.showLoginEpilogue(this, getIntent().getBooleanExtra(ARG_DO_LOGIN_UPDATE, false),
                     getIntent().getIntegerArrayListExtra(ARG_OLD_SITES_IDS));
         } else if (getIntent().getBooleanExtra(ARG_SHOW_SIGNUP_EPILOGUE, false) && savedInstanceState == null) {
+            canShowAppRatingPrompt = false;
             ActivityLauncher.showSignupEpilogue(this,
                     getIntent().getStringExtra(SignupEpilogueActivity.EXTRA_SIGNUP_DISPLAY_NAME),
                     getIntent().getStringExtra(SignupEpilogueActivity.EXTRA_SIGNUP_EMAIL_ADDRESS),
                     getIntent().getStringExtra(SignupEpilogueActivity.EXTRA_SIGNUP_PHOTO_URL),
                     getIntent().getStringExtra(SignupEpilogueActivity.EXTRA_SIGNUP_USERNAME), false);
         }
+
+        if (isGooglePlayServicesAvailable(this)) {
+            // Register for Cloud messaging
+            GCMRegistrationIntentService.enqueueWork(this,
+                    new Intent(this, GCMRegistrationIntentService.class));
+        }
+
+        AppRatingDialog.INSTANCE.init(this);
+        if (canShowAppRatingPrompt) {
+            AppRatingDialog.INSTANCE.showRateDialogIfNeeded(getFragmentManager());
+        }
+    }
+
+    public boolean isGooglePlayServicesAvailable(Activity activity) {
+        GoogleApiAvailability googleApiAvailability = GoogleApiAvailability.getInstance();
+        int connectionResult = googleApiAvailability.isGooglePlayServicesAvailable(activity);
+        switch (connectionResult) {
+            // Success: return true
+            case ConnectionResult.SUCCESS:
+                return true;
+            // Play Services unavailable, show an error dialog is the Play Services Lib needs an update
+            case ConnectionResult.SERVICE_VERSION_UPDATE_REQUIRED:
+                Dialog dialog = googleApiAvailability.getErrorDialog(activity, connectionResult, 0);
+                if (dialog != null) {
+                    dialog.show();
+                }
+                // fall through
+            default:
+            case ConnectionResult.SERVICE_MISSING:
+            case ConnectionResult.SERVICE_DISABLED:
+            case ConnectionResult.SERVICE_INVALID:
+                AppLog.w(T.NOTIFS, "Google Play Services unavailable, connection result: "
+                                   + googleApiAvailability.getErrorString(connectionResult));
+        }
+        return false;
     }
 
     private @Nullable String getAuthToken() {
@@ -299,10 +383,26 @@ public class WPMainActivity extends AppCompatActivity
                 case ARG_ME:
                     mBottomNav.setCurrentPosition(PAGE_ME);
                     break;
+                case ARG_EDITOR:
+                    if (mSelectedSite == null) {
+                        initSelectedSite();
+                    }
+                    onNewPostButtonClicked();
+                    break;
             }
         } else {
             AppLog.e(T.MAIN, "WPMainActivity.handleOpenIntent called with an invalid argument.");
         }
+    }
+
+    private void registeNewsItemObserver() {
+        mNewsManager.notificationBadgeVisibility().observe(this, new Observer<Boolean>() {
+            @Override
+            public void onChanged(@Nullable Boolean showBadge) {
+                mBottomNav.showReaderBadge(showBadge != null ? showBadge : false);
+            }
+        });
+        mNewsManager.pull(false);
     }
 
     private void launchZendeskMyTickets() {
@@ -392,7 +492,8 @@ public class WPMainActivity extends AppCompatActivity
                     boolean shouldShowKeyboard =
                             getIntent().getBooleanExtra(NotificationsListFragment.NOTE_INSTANT_REPLY_EXTRA, false);
                     NotificationsListFragment
-                            .openNoteForReply(this, noteId, shouldShowKeyboard, null, NotesAdapter.FILTERS.FILTER_ALL);
+                            .openNoteForReply(this, noteId, shouldShowKeyboard, null,
+                                    NotesAdapter.FILTERS.FILTER_ALL, true);
                 }
             } else {
                 AppLog.e(T.NOTIFS, "app launched from a PN that doesn't have a note_id in it!!");
@@ -454,7 +555,7 @@ public class WPMainActivity extends AppCompatActivity
         // We need to track the current item on the screen when this activity is resumed.
         // Ex: Notifications -> notifications detail -> back to notifications
         int currentItem = mBottomNav.getCurrentPosition();
-        trackLastVisiblePage(currentItem, false);
+        trackLastVisiblePage(currentItem, mFirstResume);
 
         if (currentItem == PAGE_NOTIFS) {
             // if we are presenting the notifications list, it's safe to clear any outstanding
@@ -466,6 +567,8 @@ public class WPMainActivity extends AppCompatActivity
 
         checkConnection();
 
+        checkQuickStartNotificationStatus();
+
         // Update account to update the notification unseen status
         if (mAccountStore.hasAccessToken()) {
             mDispatcher.dispatch(AccountActionBuilder.newFetchAccountAction());
@@ -474,6 +577,17 @@ public class WPMainActivity extends AppCompatActivity
         ProfilingUtils.split("WPMainActivity.onResume");
         ProfilingUtils.dump();
         ProfilingUtils.stop();
+
+        mFirstResume = false;
+    }
+
+    private void checkQuickStartNotificationStatus() {
+        if (getSelectedSite() != null && NetworkUtils.isNetworkAvailable(this)
+            && QuickStartUtils.isEveryQuickStartTaskDone(mQuickStartStore)
+            && !mQuickStartStore.getQuickStartNotificationReceived(getSelectedSite().getId())) {
+            CompleteQuickStartPayload payload = new CompleteQuickStartPayload(getSelectedSite(), NEXT_STEPS.toString());
+            mDispatcher.dispatch(SiteActionBuilder.newCompleteQuickStartAction(payload));
+        }
     }
 
     private void announceTitleForAccessibility(int position) {
@@ -517,12 +631,36 @@ public class WPMainActivity extends AppCompatActivity
     public void onPageChanged(int position) {
         updateTitle(position);
         trackLastVisiblePage(position, true);
+        if (getMySiteFragment() != null) {
+            QuickStartUtils.removeQuickStartFocusPoint((ViewGroup) findViewById(R.id.root_view_main));
+            hideQuickStartSnackBar();
+            if (position == PAGE_READER && getMySiteFragment().isQuickStartTaskActive(QuickStartTask.FOLLOW_SITE)) {
+                // MySite fragment might not be attached to activity, so we need to remove focus point from here
+                getMySiteFragment().requestNextStepOfActiveQuickStartTask();
+            }
+        }
     }
 
     // user tapped the new post button in the bottom navbar
     @Override
     public void onNewPostButtonClicked() {
-        ActivityLauncher.addNewPostOrPageForResult(this, getSelectedSite(), false, false);
+        if (!mSiteStore.hasSite()) {
+            // No site yet - Move to My Sites fragment that shows the create new site screen
+            mBottomNav.setCurrentPosition(PAGE_MY_SITE);
+            return;
+        }
+
+        if (getSelectedSite() != null && getMySiteFragment() != null) {
+            if (getMySiteFragment().isQuickStartTaskActive(QuickStartTask.PUBLISH_POST)) {
+                // PUBLISH_POST task requires special Quick Start notice logic, so we set the flag here
+                AppPrefs.setQuickStartNoticeRequired(
+                        !mQuickStartStore.hasDoneTask(AppPrefs.getSelectedSite(), QuickStartTask.PUBLISH_POST));
+                // MySite fragment might not be attached to activity, so we need to remove focus point from here
+                QuickStartUtils.removeQuickStartFocusPoint((ViewGroup) findViewById(R.id.root_view_main));
+            }
+        }
+
+        ActivityLauncher.addNewPostForResult(this, getSelectedSite(), false);
     }
 
     private void updateTitle() {
@@ -538,22 +676,12 @@ public class WPMainActivity extends AppCompatActivity
         }
     }
 
-    private void checkMagicLinkSignIn() {
-        if (getIntent() != null) {
-            if (getIntent().getBooleanExtra(LoginActivity.MAGIC_LOGIN, false)) {
-                mLoginAnalyticsListener.trackLoginMagicLinkSucceeded();
-                startWithNewAccount();
-            }
-        }
-    }
-
     private void trackLastVisiblePage(int position, boolean trackAnalytics) {
         switch (position) {
             case PAGE_MY_SITE:
                 ActivityId.trackLastActivity(ActivityId.MY_SITE);
                 if (trackAnalytics) {
-                    AnalyticsUtils.trackWithSiteDetails(AnalyticsTracker.Stat.MY_SITE_ACCESSED,
-                            getSelectedSite());
+                    AnalyticsUtils.trackWithSiteDetails(AnalyticsTracker.Stat.MY_SITE_ACCESSED, getSelectedSite());
                 }
                 break;
             case PAGE_READER:
@@ -602,7 +730,7 @@ public class WPMainActivity extends AppCompatActivity
 
     private void jumpNewPost(Intent data) {
         if (data != null && data.getBooleanExtra(SiteCreationActivity.KEY_DO_NEW_POST, false)) {
-            ActivityLauncher.addNewPostOrPageForResult(this, mSelectedSite, false, false);
+            ActivityLauncher.addNewPostForResult(this, mSelectedSite, false);
         }
     }
 
@@ -615,8 +743,17 @@ public class WPMainActivity extends AppCompatActivity
                     return;
                 }
                 int localId = data.getIntExtra(EditPostActivity.EXTRA_POST_LOCAL_ID, 0);
-                final SiteModel site = getSelectedSite();
+                final SiteModel site = (SiteModel) data.getSerializableExtra(WordPress.SITE);
                 final PostModel post = mPostStore.getPostByLocalPostId(localId);
+
+                if (EditPostActivity.checkToRestart(data)) {
+                    ActivityLauncher.editPostOrPageForResult(data, WPMainActivity.this, site,
+                            data.getIntExtra(EditPostActivity.EXTRA_POST_LOCAL_ID, 0));
+
+                    // a restart will happen so, no need to continue here
+                    break;
+                }
+
                 if (site != null && post != null) {
                     UploadUtils.handleEditPostResultSnackbars(
                             this,
@@ -637,9 +774,12 @@ public class WPMainActivity extends AppCompatActivity
                 if (mySiteFragment != null) {
                     mySiteFragment.onActivityResult(requestCode, resultCode, data);
                 }
+                QuickStartUtils.cancelQuickStartReminder(this);
+                AppPrefs.setQuickStartNoticeRequired(false);
 
                 setSite(data);
                 jumpNewPost(data);
+                showQuickStartDialog();
                 break;
             case RequestCodes.ADD_ACCOUNT:
                 if (resultCode == RESULT_OK) {
@@ -661,8 +801,20 @@ public class WPMainActivity extends AppCompatActivity
                 if (getMySiteFragment() != null) {
                     getMySiteFragment().onActivityResult(requestCode, resultCode, data);
 
+                    boolean isSameSiteSelected = data != null
+                            && data.getIntExtra(SitePickerActivity.KEY_LOCAL_ID, -1) == AppPrefs.getSelectedSite();
+
+                    if (!isSameSiteSelected) {
+                        QuickStartUtils.cancelQuickStartReminder(this);
+                        AppPrefs.setQuickStartNoticeRequired(false);
+                    }
+
                     setSite(data);
                     jumpNewPost(data);
+
+                    if (data != null && data.getIntExtra(ARG_CREATE_SITE, 0) == RequestCodes.CREATE_SITE) {
+                        showQuickStartDialog();
+                    }
                 }
                 break;
             case RequestCodes.SITE_SETTINGS:
@@ -687,6 +839,32 @@ public class WPMainActivity extends AppCompatActivity
                 }
                 break;
         }
+    }
+
+    private void showQuickStartDialog() {
+        if (AppPrefs.isQuickStartDisabled()
+            || getSelectedSite() == null
+            || !QuickStartUtils.isQuickStartAvailableForTheSite(getSelectedSite())) {
+            return;
+        }
+
+        String tag = MySiteFragment.TAG_QUICK_START_DIALOG;
+        PromoDialog promoDialog = new PromoDialog();
+        promoDialog.initialize(
+                tag,
+                getString(R.string.quick_start_dialog_need_help_title),
+                getString(R.string.quick_start_dialog_need_help_message),
+                getString(R.string.quick_start_dialog_need_help_button_positive),
+                R.drawable.img_illustration_site_about_280dp,
+                getString(R.string.quick_start_dialog_need_help_button_negative),
+                "",
+                getString(R.string.quick_start_dialog_need_help_button_neutral));
+
+        promoDialog.show(getSupportFragmentManager(), tag);
+        AnalyticsTracker.track(Stat.QUICK_START_REQUEST_VIEWED);
+
+        // Set migration dialog flag so it is not shown for new sites.
+        AppPrefs.setQuickStartMigrationDialogShown(true);
     }
 
     private void appLanguageChanged() {
@@ -738,8 +916,6 @@ public class WPMainActivity extends AppCompatActivity
         }
 
         if (mAccountStore.hasAccessToken()) {
-            AnalyticsTracker.track(AnalyticsTracker.Stat.SIGNED_IN);
-
             if (mIsMagicLinkLogin) {
                 if (mIsMagicLinkSignup) {
                     // Sets a flag that we need to track a magic link sign up.
@@ -763,6 +939,15 @@ public class WPMainActivity extends AppCompatActivity
                     }
                 }
             }
+        }
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onQuickStartCompleted(OnQuickStartCompleted event) {
+        if (getSelectedSite() != null && !event.isError()) {
+            // as long as we get any response that is not an error mark quick start notification as received
+            mQuickStartStore.setQuickStartNotificationReceived(event.site.getId(), true);
         }
     }
 
@@ -964,5 +1149,52 @@ public class WPMainActivity extends AppCompatActivity
         if (fragment != null) {
             fragment.onNegativeClicked(instanceTag);
         }
+    }
+
+    @Override
+    public void onNeutralClicked(@NonNull String instanceTag) {
+        MySiteFragment fragment = getMySiteFragment();
+        if (fragment != null) {
+            fragment.onNeutralClicked(instanceTag);
+        }
+    }
+
+    @Override
+    public void onDismissByOutsideTouch(@NotNull String instanceTag) {
+        MySiteFragment fragment = getMySiteFragment();
+        if (fragment != null) {
+            fragment.onDismissByOutsideTouch(instanceTag);
+        }
+    }
+
+    @Override
+    public void onLinkClicked(@NonNull String instanceTag) {
+        MySiteFragment fragment = getMySiteFragment();
+        if (fragment != null) {
+            fragment.onLinkClicked(instanceTag);
+        }
+    }
+
+    // because of the bottom nav implementation (we only get callback after active fragment is changed) we need
+    // to manage SnackBar in Activity, instead of Fragment
+    public void showQuickStartSnackBar(WPDialogSnackbar snackbar) {
+        hideQuickStartSnackBar();
+        mQuickStartSnackbar = snackbar;
+        mQuickStartSnackbar.show();
+    }
+
+    private void hideQuickStartSnackBar() {
+        if (mQuickStartSnackbar != null && mQuickStartSnackbar.isShowing()) {
+            mQuickStartSnackbar.dismiss();
+            mQuickStartSnackbar = null;
+        }
+    }
+
+    // We dismiss the QuickStart SnackBar every time activity is paused because
+    // SnackBar sometimes do not appear when another SnackBar is still visible, even in other activities (weird)
+    @Override protected void onPause() {
+        super.onPause();
+        hideQuickStartSnackBar();
+        QuickStartUtils.removeQuickStartFocusPoint((ViewGroup) findViewById(R.id.root_view_main));
     }
 }

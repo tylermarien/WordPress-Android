@@ -3,7 +3,6 @@ package org.wordpress.android.ui.stats;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.net.http.SslError;
-import android.os.Build;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -23,9 +22,7 @@ import org.wordpress.android.ui.stats.service.StatsServiceLogic;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.DisplayUtils;
 import org.wordpress.android.util.FormatUtils;
-import org.wordpress.android.util.GravatarUtils;
 import org.wordpress.android.util.StringUtils;
-import org.wordpress.android.util.image.ImageType;
 
 import java.util.List;
 
@@ -88,13 +85,6 @@ public class StatsGeoviewsFragment extends StatsAbstractListFragment {
             return;
         }
 
-        // Disable the map on API 18 or lower (Android 4.3 or lower).
-        // See: https://github.com/wordpress-mobile/WordPress-Android/issues/6146
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            AppLog.w(AppLog.T.STATS, "Geo map is disabled on API 18 or lower. Current API: " + Build.VERSION.SDK_INT);
-            return;
-        }
-
         // setting up different margins for the map. We're basically remove left margins since the
         // chart service produce a map that's slightly shifted on the right. See the Web version.
         int dp4 = DisplayUtils.dpToPx(mTopPagerContainer.getContext(), 4);
@@ -111,7 +101,7 @@ public class StatsGeoviewsFragment extends StatsAbstractListFragment {
                 new ViewTreeObserver.OnGlobalLayoutListener() {
             @Override
             public void onGlobalLayout() {
-                mTopPagerContainer.getViewTreeObserver().removeGlobalOnLayoutListener(this);
+                mTopPagerContainer.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                 if (!isAdded()) {
                     return;
                 }
@@ -120,7 +110,7 @@ public class StatsGeoviewsFragment extends StatsAbstractListFragment {
 
                 for (int i = 0; i < countries.size(); i++) {
                     final GeoviewModel currentCountry = countries.get(i);
-                    dataToLoad.append("['").append(currentCountry.getCountryFullName()).append("',")
+                    dataToLoad.append("['").append(currentCountry.getCountryShortName()).append("',")
                             .append(currentCountry.getViews()).append("],");
                 }
 
@@ -277,16 +267,8 @@ public class StatsGeoviewsFragment extends StatsAbstractListFragment {
 
             holder.setEntryText(entry);
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                // On Android >= 5.0, use the emoji flag
-                holder.alternativeImage.setText(currentRowData.getFlagEmoji());
-                holder.alternativeImage.setVisibility(View.VISIBLE);
-            } else {
-                // On other Android versions, use the Gravatar image
-                mImageManager.load(holder.networkImageView, ImageType.BLAVATAR,
-                        GravatarUtils.fixGravatarUrl(imageUrl, mResourceVars.mHeaderAvatarSizePx));
-                holder.networkImageView.setVisibility(View.VISIBLE);
-            }
+            holder.alternativeImage.setText(currentRowData.getFlagEmoji());
+            holder.alternativeImage.setVisibility(View.VISIBLE);
 
             return rowView;
         }

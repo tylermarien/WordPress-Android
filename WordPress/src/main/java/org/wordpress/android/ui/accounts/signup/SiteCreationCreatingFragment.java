@@ -1,11 +1,14 @@
 package org.wordpress.android.ui.accounts.signup;
 
+import android.annotation.SuppressLint;
 import android.os.Bundle;
 import android.support.annotation.IdRes;
 import android.support.annotation.LayoutRes;
+import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.ValueCallback;
 import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -13,6 +16,7 @@ import android.widget.TextView;
 
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import org.wordpress.android.BuildConfig;
 import org.wordpress.android.R;
 import org.wordpress.android.analytics.AnalyticsTracker;
 import org.wordpress.android.ui.accounts.signup.SiteCreationService.SiteCreationState;
@@ -30,7 +34,7 @@ public class SiteCreationCreatingFragment extends SiteCreationBaseFormFragment<S
 
     private static final String ARG_SITE_TITLE = "ARG_SITE_TITLE";
     private static final String ARG_SITE_TAGLINE = "ARG_SITE_TAGLINE";
-    private static final String ARG_SITE_SLUG = "ARG_SITE_SLUG";
+    private static final String ARG_SITE_ADDRESS = "ARG_SITE_ADDRESS";
     private static final String ARG_SITE_THEME_ID = "ARG_SITE_THEME_ID";
 
     private static final String KEY_WEBVIEW_LOADED_IN_TIME = "KEY_WEBVIEW_LOADED_IN_TIME";
@@ -76,13 +80,13 @@ public class SiteCreationCreatingFragment extends SiteCreationBaseFormFragment<S
         return !state.isAfterCreation();
     }
 
-    public static SiteCreationCreatingFragment newInstance(String siteTitle, String siteTagline, String siteSlug,
+    public static SiteCreationCreatingFragment newInstance(String siteTitle, String siteTagline, String siteAddress,
                                                            String themeId) {
         SiteCreationCreatingFragment fragment = new SiteCreationCreatingFragment();
         Bundle args = new Bundle();
         args.putString(ARG_SITE_TITLE, siteTitle);
         args.putString(ARG_SITE_TAGLINE, siteTagline);
-        args.putString(ARG_SITE_SLUG, siteSlug);
+        args.putString(ARG_SITE_ADDRESS, siteAddress);
         args.putString(ARG_SITE_THEME_ID, themeId);
         fragment.setArguments(args);
         return fragment;
@@ -188,9 +192,9 @@ public class SiteCreationCreatingFragment extends SiteCreationBaseFormFragment<S
     void createSite(SiteCreationState retryFromState) {
         String siteTitle = getArguments().getString(ARG_SITE_TITLE);
         String siteTagline = getArguments().getString(ARG_SITE_TAGLINE);
-        String siteSlug = getArguments().getString(ARG_SITE_SLUG);
+        String siteAddress = getArguments().getString(ARG_SITE_ADDRESS);
         String themeId = getArguments().getString(ARG_SITE_THEME_ID);
-        SiteCreationService.createSite(getContext(), retryFromState, siteTitle, siteTagline, siteSlug, themeId);
+        SiteCreationService.createSite(getContext(), retryFromState, siteTitle, siteTagline, siteAddress, themeId);
     }
 
     private void mutateToCompleted(boolean showWebView) {
@@ -210,11 +214,25 @@ public class SiteCreationCreatingFragment extends SiteCreationBaseFormFragment<S
         }
     }
 
-    private PreviewWebViewClient loadWebview() {
-        String siteAddress = "https://" + getArguments().getString(ARG_SITE_SLUG) + ".wordpress.com";
-        PreviewWebViewClient client = new PreviewWebViewClient(siteAddress);
+    private @Nullable PreviewWebViewClient loadWebview() {
+        String siteAddress = getArguments() != null ? getArguments().getString(ARG_SITE_ADDRESS, "") : "";
+        if (siteAddress.isEmpty()) {
+            if (BuildConfig.DEBUG) {
+                throw new IllegalStateException("The newly created site address should not be null!");
+            }
+            return null;
+        }
+        /*
+          For wordpress.com sites we need to load the site with `https` protocol whereas the `.blog` sub-domains only
+          work with `http`protocol.
+
+          Ideally, we'd get the full url from the site creation service so we don't do this guess work but since this
+          flow is completely being replaced in an upcoming version, it's good enough a solution as it's less disrupting.
+         */
+        String url = (siteAddress.contains("wordpress.com") ? "https://" : "http://") + siteAddress;
+        PreviewWebViewClient client = new PreviewWebViewClient(url);
         mWebView.setWebViewClient(client);
-        mWebView.loadUrl(siteAddress);
+        mWebView.loadUrl(url);
         return client;
     }
 
@@ -228,9 +246,25 @@ public class SiteCreationCreatingFragment extends SiteCreationBaseFormFragment<S
         @Override
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
-
+            hideGetStartedBar(view);
+            
             mIsPageFinished = true;
         }
+    }
+
+    // Hacky solution to https://github.com/wordpress-mobile/WordPress-Android/issues/8233
+    // Ideally we would hide "get started" bar on server side
+    @SuppressLint("SetJavaScriptEnabled")
+    private static void hideGetStartedBar(@NonNull final WebView webView) {
+        webView.getSettings().setJavaScriptEnabled(true);
+        String javascript = "document.querySelector('html').style.cssText += '; margin-top: 0 !important;';\n"
+                            + "document.getElementById('wpadminbar').style.display = 'none';\n";
+
+        webView.evaluateJavascript(javascript, new ValueCallback<String>() {
+            @Override public void onReceiveValue(String value) {
+                webView.getSettings().setJavaScriptEnabled(false);
+            }
+        });
     }
 
     private void disableUntil(@IdRes int textViewId) {

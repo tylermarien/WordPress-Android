@@ -15,11 +15,11 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
 import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.annotation.StringRes;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat.OnRequestPermissionsResultCallback;
 import android.support.v4.app.Fragment;
@@ -44,12 +44,10 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
-import android.view.inputmethod.InputMethodManager;
 import android.widget.RelativeLayout;
 
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
-import org.jetbrains.annotations.NotNull;
 import org.wordpress.android.BuildConfig;
 import org.wordpress.android.JavaScriptException;
 import org.wordpress.android.R;
@@ -71,17 +69,18 @@ import org.wordpress.android.editor.EditorMediaUtils;
 import org.wordpress.android.editor.EditorWebViewAbstract.ErrorListener;
 import org.wordpress.android.editor.EditorWebViewCompatibility;
 import org.wordpress.android.editor.EditorWebViewCompatibility.ReflectionException;
+import org.wordpress.android.editor.GutenbergEditorFragment;
 import org.wordpress.android.editor.ImageSettingsDialogFragment;
 import org.wordpress.android.editor.LegacyEditorFragment;
 import org.wordpress.android.editor.MediaToolbarAction;
 import org.wordpress.android.fluxc.Dispatcher;
 import org.wordpress.android.fluxc.action.AccountAction;
-import org.wordpress.android.fluxc.action.PostAction;
 import org.wordpress.android.fluxc.generated.AccountActionBuilder;
 import org.wordpress.android.fluxc.generated.MediaActionBuilder;
 import org.wordpress.android.fluxc.generated.PostActionBuilder;
 import org.wordpress.android.fluxc.generated.UploadActionBuilder;
 import org.wordpress.android.fluxc.model.AccountModel;
+import org.wordpress.android.fluxc.model.CauseOfOnPostChanged;
 import org.wordpress.android.fluxc.model.MediaModel;
 import org.wordpress.android.fluxc.model.MediaModel.MediaUploadState;
 import org.wordpress.android.fluxc.model.PostModel;
@@ -101,6 +100,8 @@ import org.wordpress.android.fluxc.store.PostStore;
 import org.wordpress.android.fluxc.store.PostStore.OnPostChanged;
 import org.wordpress.android.fluxc.store.PostStore.OnPostUploaded;
 import org.wordpress.android.fluxc.store.PostStore.RemotePostPayload;
+import org.wordpress.android.fluxc.store.QuickStartStore;
+import org.wordpress.android.fluxc.store.QuickStartStore.QuickStartTask;
 import org.wordpress.android.fluxc.store.SiteStore;
 import org.wordpress.android.fluxc.store.UploadStore;
 import org.wordpress.android.fluxc.store.UploadStore.ClearMediaPayload;
@@ -111,6 +112,8 @@ import org.wordpress.android.ui.ActivityLauncher;
 import org.wordpress.android.ui.RequestCodes;
 import org.wordpress.android.ui.Shortcut;
 import org.wordpress.android.ui.accounts.HelpActivity.Origin;
+import org.wordpress.android.ui.giphy.GiphyPickerActivity;
+import org.wordpress.android.ui.history.HistoryListItem.Revision;
 import org.wordpress.android.ui.media.MediaBrowserActivity;
 import org.wordpress.android.ui.media.MediaBrowserType;
 import org.wordpress.android.ui.media.MediaSettingsActivity;
@@ -119,6 +122,8 @@ import org.wordpress.android.ui.photopicker.PhotoPickerActivity;
 import org.wordpress.android.ui.photopicker.PhotoPickerFragment;
 import org.wordpress.android.ui.photopicker.PhotoPickerFragment.PhotoPickerIcon;
 import org.wordpress.android.ui.posts.InsertMediaDialog.InsertMediaCallback;
+import org.wordpress.android.ui.posts.PostEditorAnalyticsSession.Editor;
+import org.wordpress.android.ui.posts.PostEditorAnalyticsSession.Outcome;
 import org.wordpress.android.ui.posts.PromoDialog.PromoDialogClickInterface;
 import org.wordpress.android.ui.posts.services.AztecImageLoader;
 import org.wordpress.android.ui.posts.services.AztecVideoLoader;
@@ -130,7 +135,7 @@ import org.wordpress.android.ui.uploads.UploadService;
 import org.wordpress.android.ui.uploads.UploadUtils;
 import org.wordpress.android.ui.uploads.VideoOptimizer;
 import org.wordpress.android.util.AccessibilityUtils;
-import org.wordpress.android.util.AnalyticsUtils;
+import org.wordpress.android.util.ActivityUtils;
 import org.wordpress.android.util.AniUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
@@ -145,6 +150,7 @@ import org.wordpress.android.util.LocaleManager;
 import org.wordpress.android.util.MediaUtils;
 import org.wordpress.android.util.NetworkUtils;
 import org.wordpress.android.util.PermissionUtils;
+import org.wordpress.android.util.QuickStartUtils;
 import org.wordpress.android.util.ShortcutUtils;
 import org.wordpress.android.util.SiteUtils;
 import org.wordpress.android.util.StringUtils;
@@ -154,15 +160,16 @@ import org.wordpress.android.util.WPHtml;
 import org.wordpress.android.util.WPMediaUtils;
 import org.wordpress.android.util.WPPermissionUtils;
 import org.wordpress.android.util.WPUrlUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
 import org.wordpress.android.util.helpers.MediaFile;
 import org.wordpress.android.util.helpers.MediaGallery;
 import org.wordpress.android.util.helpers.MediaGalleryImageSpan;
 import org.wordpress.android.util.helpers.WPImageSpan;
 import org.wordpress.android.util.image.ImageManager;
+import org.wordpress.android.widgets.AppRatingDialog;
 import org.wordpress.android.widgets.WPViewPager;
 import org.wordpress.aztec.AztecExceptionHandler;
 import org.wordpress.aztec.util.AztecLog;
-import org.wordpress.passcodelock.AppLockManager;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -183,6 +190,9 @@ import javax.inject.Inject;
 
 import de.greenrobot.event.EventBus;
 
+import static org.wordpress.android.analytics.AnalyticsTracker.Stat.APP_REVIEWS_EVENT_INCREMENTED_BY_PUBLISHING_POST_OR_PAGE;
+import static org.wordpress.android.ui.history.HistoryDetailContainerFragment.KEY_REVISION;
+
 public class EditPostActivity extends AppCompatActivity implements
         EditorFragmentActivity,
         EditorImageSettingsListener,
@@ -197,8 +207,10 @@ public class EditPostActivity extends AppCompatActivity implements
         BasicFragmentDialog.BasicDialogNegativeClickInterface,
         PromoDialogClickInterface,
         PostSettingsListDialogFragment.OnPostSettingsDialogFragmentListener,
-        PostDatePickerDialogFragment.OnPostDatePickerDialogListener {
+        PostDatePickerDialogFragment.OnPostDatePickerDialogListener,
+        HistoryListFragment.HistoryItemClickInterface {
     public static final String EXTRA_POST_LOCAL_ID = "postModelLocalId";
+    public static final String EXTRA_POST_REMOTE_ID = "postModelRemoteId";
     public static final String EXTRA_IS_PAGE = "isPage";
     public static final String EXTRA_IS_PROMO = "isPromo";
     public static final String EXTRA_IS_QUICKPRESS = "isQuickPress";
@@ -207,22 +219,31 @@ public class EditPostActivity extends AppCompatActivity implements
     public static final String EXTRA_HAS_FAILED_MEDIA = "hasFailedMedia";
     public static final String EXTRA_HAS_CHANGES = "hasChanges";
     public static final String EXTRA_IS_DISCARDABLE = "isDiscardable";
+    public static final String EXTRA_RESTART_EDITOR = "isSwitchingEditors";
     public static final String EXTRA_INSERT_MEDIA = "insertMedia";
+    public static final String EXTRA_IS_NEW_POST = "isNewPost";
     private static final String STATE_KEY_EDITOR_FRAGMENT = "editorFragment";
     private static final String STATE_KEY_DROPPED_MEDIA_URIS = "stateKeyDroppedMediaUri";
     private static final String STATE_KEY_POST_LOCAL_ID = "stateKeyPostModelLocalId";
     private static final String STATE_KEY_POST_REMOTE_ID = "stateKeyPostModelRemoteId";
-    private static final String STATE_KEY_IS_DIALOG_PROGRESS_SHOWN = "stateIsDialogProgressShown";
+    private static final String STATE_KEY_IS_DIALOG_PROGRESS_SHOWN = "stateKeyIsDialogProgressShown";
+    private static final String STATE_KEY_IS_DISCARDING_CHANGES = "stateKeyIsDiscardingChanges";
     private static final String STATE_KEY_IS_NEW_POST = "stateKeyIsNewPost";
     private static final String STATE_KEY_IS_PHOTO_PICKER_VISIBLE = "stateKeyPhotoPickerVisible";
     private static final String STATE_KEY_HTML_MODE_ON = "stateKeyHtmlModeOn";
+    private static final String STATE_KEY_REVISION = "stateKeyRevision";
+    private static final String STATE_KEY_EDITOR_SESSION_DATA = "stateKeyEditorSessionData";
+    private static final String STATE_KEY_GUTENBERG_IS_SHOWN = "stateKeyGutenbergIsShown";
     private static final String TAG_DISCARDING_CHANGES_ERROR_DIALOG = "tag_discarding_changes_error_dialog";
+    private static final String TAG_DISCARDING_CHANGES_NO_NETWORK_DIALOG = "tag_discarding_changes_no_network_dialog";
     private static final String TAG_PUBLISH_CONFIRMATION_DIALOG = "tag_publish_confirmation_dialog";
     private static final String TAG_REMOVE_FAILED_UPLOADS_DIALOG = "tag_remove_failed_uploads_dialog";
+    private static final String TAG_GB_INFORMATIVE_DIALOG = "tag_gb_informative_dialog";
 
     private static final int PAGE_CONTENT = 0;
     private static final int PAGE_SETTINGS = 1;
     private static final int PAGE_PREVIEW = 2;
+    private static final int PAGE_HISTORY = 3;
 
     private static final String PHOTO_PICKER_TAG = "photo_picker";
     private static final String ASYNC_PROMO_DIALOG_TAG = "async_promo";
@@ -238,15 +259,25 @@ public class EditPostActivity extends AppCompatActivity implements
         STOCK_PHOTO_LIBRARY
     }
 
+    enum RestartEditorOptions {
+        NO_RESTART,
+        RESTART_SUPPRESS_GUTENBERG,
+        RESTART_DONT_SUPPRESS_GUTENBERG,
+    }
+    private RestartEditorOptions mRestartEditorOption = RestartEditorOptions.NO_RESTART;
+
     private Handler mHandler;
     private int mDebounceCounter = 0;
     private boolean mShowAztecEditor;
     private boolean mShowNewEditor;
+    private boolean mShowGutenbergEditor;
     private boolean mMediaInsertedOnCreation;
 
     private List<String> mPendingVideoPressInfoRequests;
     private List<String> mAztecBackspaceDeletedMediaItemIds = new ArrayList<>();
     private List<String> mMediaMarkedUploadingOnStartIds = new ArrayList<>();
+    private PostEditorAnalyticsSession mPostEditorAnalyticsSession;
+    private boolean mIsConfigChange = false;
 
     /**
      * The {@link android.support.v4.view.PagerAdapter} that will provide
@@ -264,9 +295,11 @@ public class EditPostActivity extends AppCompatActivity implements
     WPViewPager mViewPager;
 
     private PostModel mPost;
-    private PostModel mPostWithLocalChanges;
+    private PostModel mPostForUndo;
     private PostModel mOriginalPost;
     private boolean mOriginalPostHadLocalChangesOnOpen;
+
+    private Revision mRevision;
 
     private EditorFragmentAbstract mEditorFragment;
     private EditPostSettingsFragment mEditPostSettingsFragment;
@@ -300,6 +333,7 @@ public class EditPostActivity extends AppCompatActivity implements
     @Inject UploadStore mUploadStore;
     @Inject FluxCImageLoader mImageLoader;
     @Inject ShortcutUtils mShortcutUtils;
+    @Inject QuickStartStore mQuickStartStore;
     @Inject ZendeskHelper mZendeskHelper;
     @Inject ImageManager mImageManager;
 
@@ -307,6 +341,10 @@ public class EditPostActivity extends AppCompatActivity implements
 
     // for keeping the media uri while asking for permissions
     private ArrayList<Uri> mDroppedMediaUris;
+
+    private boolean isModernEditor() {
+        return mShowNewEditor || mShowAztecEditor || mShowGutenbergEditor;
+    }
 
     private Runnable mFetchMediaRunnable = new Runnable() {
         @Override
@@ -319,9 +357,43 @@ public class EditPostActivity extends AppCompatActivity implements
         }
     };
 
+    public static boolean checkToRestart(@NonNull Intent data) {
+        return data.hasExtra(EditPostActivity.EXTRA_RESTART_EDITOR)
+               && RestartEditorOptions.valueOf(data.getStringExtra(EditPostActivity.EXTRA_RESTART_EDITOR))
+                  != RestartEditorOptions.NO_RESTART;
+    }
+
     @Override
     protected void attachBaseContext(Context newBase) {
         super.attachBaseContext(LocaleManager.setLocale(newBase));
+    }
+
+    private void newPostSetup() {
+        mIsNewPost = true;
+
+        if (mSite == null) {
+            showErrorAndFinish(R.string.blog_not_found);
+            return;
+        }
+        if (!mSite.isVisible()) {
+            showErrorAndFinish(R.string.error_blog_hidden);
+            return;
+        }
+
+        // Create a new post
+        mPost = mPostStore.instantiatePostModel(mSite, mIsPage, null, null);
+        mPost.setStatus(PostStatus.DRAFT.toString());
+        EventBus.getDefault().postSticky(
+                new PostEvents.PostOpenedInEditor(mPost.getLocalSiteId(), mPost.getId()));
+        mShortcutUtils.reportShortcutUsed(Shortcut.CREATE_NEW_POST);
+    }
+
+    private void createPostEditorAnalyticsSessionTracker(boolean showGutenbergEditor, PostModel post, SiteModel site) {
+        if (mPostEditorAnalyticsSession == null) {
+            mPostEditorAnalyticsSession = new PostEditorAnalyticsSession(
+                    showGutenbergEditor ? Editor.GUTENBERG : Editor.CLASSIC,
+                    post, site);
+        }
     }
 
     @Override
@@ -340,8 +412,6 @@ public class EditPostActivity extends AppCompatActivity implements
 
         // Check whether to show the visual editor
         PreferenceManager.setDefaultValues(this, R.xml.account_settings, false);
-        // AppPrefs.setAztecEditorAvailable(true);
-        // AppPrefs.setAztecEditorEnabled(true);
         mShowAztecEditor = AppPrefs.isAztecEditorEnabled();
         mShowNewEditor = AppPrefs.isVisualEditorEnabled();
 
@@ -362,6 +432,7 @@ public class EditPostActivity extends AppCompatActivity implements
         FragmentManager fragmentManager = getSupportFragmentManager();
         Bundle extras = getIntent().getExtras();
         String action = getIntent().getAction();
+        boolean isRestarting = !RestartEditorOptions.NO_RESTART.name().equals(extras.getString(EXTRA_RESTART_EDITOR));
         if (savedInstanceState == null) {
             if (!getIntent().hasExtra(EXTRA_POST_LOCAL_ID)
                 || Intent.ACTION_SEND.equals(action)
@@ -377,39 +448,34 @@ public class EditPostActivity extends AppCompatActivity implements
                 if (extras != null) {
                     mIsPage = extras.getBoolean(EXTRA_IS_PAGE);
                 }
-                mIsNewPost = true;
-
-                if (mSite == null) {
-                    showErrorAndFinish(R.string.blog_not_found);
-                    return;
-                }
-                if (!mSite.isVisible()) {
-                    showErrorAndFinish(R.string.error_blog_hidden);
-                    return;
-                }
-
-                // Create a new post
-                mPost = mPostStore.instantiatePostModel(mSite, mIsPage, null, null);
-                mPost.setStatus(PostStatus.PUBLISHED.toString());
-                EventBus.getDefault().postSticky(
-                        new PostEvents.PostOpenedInEditor(mPost.getLocalSiteId(), mPost.getId()));
-                mShortcutUtils.reportShortcutUsed(Shortcut.CREATE_NEW_POST);
+                newPostSetup();
             } else if (extras != null) {
-                // Load post passed in extras
-                mPost = mPostStore.getPostByLocalPostId(extras.getInt(EXTRA_POST_LOCAL_ID));
+                mPost = mPostStore.getPostByLocalPostId(extras.getInt(EXTRA_POST_LOCAL_ID)); // Load post from extras
+
                 if (mPost != null) {
                     initializePostObject();
+                } else if (isRestarting) {
+                    newPostSetup();
                 }
+            }
+
+            // retrieve Editor session data if switched editors
+            if (isRestarting && extras.getSerializable(STATE_KEY_EDITOR_SESSION_DATA) != null) {
+                mPostEditorAnalyticsSession =
+                        (PostEditorAnalyticsSession) extras.getSerializable(STATE_KEY_EDITOR_SESSION_DATA);
             }
         } else {
             mDroppedMediaUris = savedInstanceState.getParcelable(STATE_KEY_DROPPED_MEDIA_URIS);
             mIsNewPost = savedInstanceState.getBoolean(STATE_KEY_IS_NEW_POST, false);
             mIsDialogProgressShown = savedInstanceState.getBoolean(STATE_KEY_IS_DIALOG_PROGRESS_SHOWN, false);
+            mIsDiscardingChanges = savedInstanceState.getBoolean(STATE_KEY_IS_DISCARDING_CHANGES, false);
+            mRevision = savedInstanceState.getParcelable(STATE_KEY_REVISION);
+            mPostEditorAnalyticsSession =
+                    (PostEditorAnalyticsSession) savedInstanceState.getSerializable(STATE_KEY_EDITOR_SESSION_DATA);
 
             showDialogProgress(mIsDialogProgressShown);
 
-            // if we have a remote id saved, let's first try with that, as the local Id might have changed
-            // after FETCH_POSTS
+            // if we have a remote id saved, let's first try that, as the local Id might have changed after FETCH_POSTS
             if (savedInstanceState.containsKey(STATE_KEY_POST_REMOTE_ID)) {
                 mPost = mPostStore.getPostByRemotePostId(savedInstanceState.getLong(STATE_KEY_POST_REMOTE_ID), mSite);
                 initializePostObject();
@@ -432,23 +498,52 @@ public class EditPostActivity extends AppCompatActivity implements
             return;
         }
 
-        if (mHasSetPostContent = mEditorFragment != null) {
-            mEditorFragment.setImageLoader(mImageLoader);
-        }
-
         // Ensure we have a valid post
         if (mPost == null) {
             showErrorAndFinish(R.string.post_not_found);
             return;
         }
 
+        QuickStartUtils.completeTaskAndRemindNextOne(mQuickStartStore, QuickStartTask.PUBLISH_POST,
+                mDispatcher, mSite, this);
+
+        if (mHasSetPostContent = mEditorFragment != null) {
+            mEditorFragment.setImageLoader(mImageLoader);
+        }
+
+        // Ensure that this check happens when mPost is set
+        if (savedInstanceState == null) {
+            String restartEditorOptionName = getIntent().getStringExtra(EXTRA_RESTART_EDITOR);
+            RestartEditorOptions restartEditorOption =
+                    restartEditorOptionName == null ? RestartEditorOptions.RESTART_DONT_SUPPRESS_GUTENBERG
+                            : RestartEditorOptions.valueOf(restartEditorOptionName);
+
+            mShowGutenbergEditor = PostUtils.shouldShowGutenbergEditor(mIsNewPost, mPost)
+                                   && restartEditorOption != RestartEditorOptions.RESTART_SUPPRESS_GUTENBERG;
+
+            // override this if we're being fed media to start a Post for now
+            // EXTRA_INSERT_MEDIA comes from the WP app Media section, and EXTRA_STREAM is what we check
+            // for when receiving content from outside the WP app to be shared there
+            if (getIntent().hasExtra(EXTRA_INSERT_MEDIA) || getIntent().hasExtra(Intent.EXTRA_STREAM)) {
+                mShowGutenbergEditor = false;
+            }
+        } else {
+            mShowGutenbergEditor = savedInstanceState.getBoolean(STATE_KEY_GUTENBERG_IS_SHOWN);
+        }
+
+        // ok now we are sure to have both a valid Post and showGutenberg flag, let's start the editing session tracker
+        createPostEditorAnalyticsSessionTracker(mShowGutenbergEditor, mPost, mSite);
+
+        if (savedInstanceState == null) {
+            // Bump the stat the first time the editor is opened.
+            PostUtils.trackOpenPostAnalytics(mPost, mSite);
+        }
+
         if (mIsNewPost) {
             trackEditorCreatedPost(action, getIntent());
         } else {
-            PostUtils.trackOpenPostAnalytics(mPost, mSite);
-            // if we are opening a Post for which an error notification exists, we need to remove
-            // it from the dashboard to prevent the user from tapping RETRY on a Post that is
-            // being currently edited
+            // if we are opening a Post for which an error notification exists, we need to remove it from the dashboard
+            // to prevent the user from tapping RETRY on a Post that is being currently edited
             UploadService.cancelFinalNotification(this, mPost);
             resetUploadingMediaToFailedIfPostHasNotMediaInProgressOrQueued();
         }
@@ -459,13 +554,13 @@ public class EditPostActivity extends AppCompatActivity implements
         // Set up the ViewPager with the sections adapter.
         mViewPager = findViewById(R.id.pager);
         mViewPager.setAdapter(mSectionsPagerAdapter);
-        mViewPager.setOffscreenPageLimit(2);
+        mViewPager.setOffscreenPageLimit(3);
         mViewPager.setPagingEnabled(false);
 
-        // When swiping between different sections, select the corresponding
-        // tab. We can also use ActionBar.Tab#select() to do this if we have
-        // a reference to the Tab.
-        mViewPager.setOnPageChangeListener(new ViewPager.SimpleOnPageChangeListener() {
+        // When swiping between different sections, select the corresponding tab. We can also use ActionBar.Tab#select()
+        // to do this if we have a reference to the Tab.
+        mViewPager.clearOnPageChangeListeners();
+        mViewPager.addOnPageChangeListener(new ViewPager.SimpleOnPageChangeListener() {
             @Override
             public void onPageSelected(int position) {
                 invalidateOptionsMenu();
@@ -492,6 +587,9 @@ public class EditPostActivity extends AppCompatActivity implements
                             }
                         }
                     });
+                } else if (position == PAGE_HISTORY) {
+                    setTitle(R.string.history_title);
+                    hidePhotoPicker();
                 }
             }
         });
@@ -504,9 +602,11 @@ public class EditPostActivity extends AppCompatActivity implements
             mOriginalPost = mPost.clone();
             mOriginalPostHadLocalChangesOnOpen = mOriginalPost.isLocallyChanged();
             mPost = UploadService.updatePostWithCurrentlyCompletedUploads(mPost);
-            mMediaMarkedUploadingOnStartIds =
-                    AztecEditorFragment.getMediaMarkedUploadingInPostContent(this, mPost.getContent());
-            Collections.sort(mMediaMarkedUploadingOnStartIds);
+            if (mShowAztecEditor) {
+                mMediaMarkedUploadingOnStartIds =
+                        AztecEditorFragment.getMediaMarkedUploadingInPostContent(this, mPost.getContent());
+                Collections.sort(mMediaMarkedUploadingOnStartIds);
+            }
             mIsPage = mPost.isPage();
 
             EventBus.getDefault().postSticky(
@@ -523,6 +623,9 @@ public class EditPostActivity extends AppCompatActivity implements
     }
 
     private void purgeMediaToPostAssociationsIfNotInPostAnymore() {
+        boolean useAztec = AppPrefs.isAztecEditorEnabled();
+        boolean useGutenberg = AppPrefs.isGutenbergEditorEnabled();
+
         ArrayList<MediaModel> allMedia = new ArrayList<>();
         allMedia.addAll(mUploadStore.getFailedMediaForPost(mPost));
         allMedia.addAll(mUploadStore.getCompletedMediaForPost(mPost));
@@ -531,8 +634,16 @@ public class EditPostActivity extends AppCompatActivity implements
         if (!allMedia.isEmpty()) {
             HashSet<MediaModel> mediaToDeleteAssociationFor = new HashSet<>();
             for (MediaModel media : allMedia) {
-                if (!AztecEditorFragment.isMediaInPostBody(this, mPost.getContent(), String.valueOf(media.getId()))) {
-                    mediaToDeleteAssociationFor.add(media);
+                if (useAztec) {
+                    if (!AztecEditorFragment.isMediaInPostBody(this,
+                            mPost.getContent(), String.valueOf(media.getId()))) {
+                        mediaToDeleteAssociationFor.add(media);
+                    }
+                } else if (useGutenberg) {
+                    if (!PostUtils.isMediaInGutenbergPostBody(
+                            mPost.getContent(), String.valueOf(media.getId()))) {
+                        mediaToDeleteAssociationFor.add(media);
+                    }
                 }
             }
 
@@ -597,11 +708,11 @@ public class EditPostActivity extends AppCompatActivity implements
 
         EventBus.getDefault().register(this);
 
-        reattachUploadingMedia();
+        reattachUploadingMediaForAztec();
     }
 
-    private void reattachUploadingMedia() {
-        if (mEditorMediaUploadListener != null) {
+    private void reattachUploadingMediaForAztec() {
+        if (mEditorFragment instanceof AztecEditorFragment && mEditorMediaUploadListener != null) {
             // UploadService.getPendingMediaForPost will be populated only when the user exits the editor
             // But if the user doesn't exit the editor and sends the app to the background, a reattachment
             // for the media within this Post is needed as soon as the app comes back to foreground,
@@ -645,7 +756,7 @@ public class EditPostActivity extends AppCompatActivity implements
 
     @Override protected void onStop() {
         super.onStop();
-        if (mAztecImageLoader != null) {
+        if (mAztecImageLoader != null && isFinishing()) {
             mAztecImageLoader.clearTargets();
             mAztecImageLoader = null;
         }
@@ -653,6 +764,9 @@ public class EditPostActivity extends AppCompatActivity implements
 
     @Override
     protected void onDestroy() {
+        if (!mIsConfigChange && (mRestartEditorOption == RestartEditorOptions.NO_RESTART)) {
+            mPostEditorAnalyticsSession.end();
+        }
         AnalyticsTracker.track(AnalyticsTracker.Stat.EDITOR_CLOSED);
         mDispatcher.unregister(this);
         if (mHandler != null) {
@@ -685,11 +799,18 @@ public class EditPostActivity extends AppCompatActivity implements
         if (!mPost.isLocalDraft()) {
             outState.putLong(STATE_KEY_POST_REMOTE_ID, mPost.getRemotePostId());
         }
+        outState.putBoolean(STATE_KEY_IS_DISCARDING_CHANGES, mIsDiscardingChanges);
         outState.putBoolean(STATE_KEY_IS_DIALOG_PROGRESS_SHOWN, mIsDialogProgressShown);
         outState.putBoolean(STATE_KEY_IS_NEW_POST, mIsNewPost);
         outState.putBoolean(STATE_KEY_IS_PHOTO_PICKER_VISIBLE, isPhotoPickerShowing());
         outState.putBoolean(STATE_KEY_HTML_MODE_ON, mHtmlModeMenuStateOn);
         outState.putSerializable(WordPress.SITE, mSite);
+        outState.putParcelable(STATE_KEY_REVISION, mRevision);
+
+        outState.putSerializable(STATE_KEY_EDITOR_SESSION_DATA, mPostEditorAnalyticsSession);
+        mIsConfigChange = true; // don't call sessionData.end() in onDestroy() if this is an Android config change
+
+        outState.putBoolean(STATE_KEY_GUTENBERG_IS_SHOWN, mShowGutenbergEditor);
 
         outState.putParcelableArrayList(STATE_KEY_DROPPED_MEDIA_URIS, mDroppedMediaUris);
 
@@ -734,16 +855,25 @@ public class EditPostActivity extends AppCompatActivity implements
                 } else {
                     return getString(R.string.update_verb);
                 }
+            case DRAFT:
+                if (isNewPost() && mPost.isLocalDraft()) {
+                    return getString(R.string.post_status_publish_post);
+                } else {
+                    return handleDefaultForSaveButtonText();
+                }
             case PRIVATE:
             case PENDING:
             case TRASHED:
-            case DRAFT:
             default:
-                if (mPost.isLocalDraft()) {
-                    return getString(R.string.save);
-                } else {
-                    return getString(R.string.update_verb);
-                }
+                return handleDefaultForSaveButtonText();
+        }
+    }
+
+    private String handleDefaultForSaveButtonText() {
+        if (mPost.isLocalDraft()) {
+            return getString(R.string.save);
+        } else {
+            return getString(R.string.update_verb);
         }
     }
 
@@ -758,6 +888,7 @@ public class EditPostActivity extends AppCompatActivity implements
 
         switch (PostStatus.fromPost(mPost)) {
             case DRAFT:
+            case PENDING:
                 return getString(R.string.menu_publish_now);
             case PUBLISHED:
             case UNKNOWN:
@@ -767,7 +898,6 @@ public class EditPostActivity extends AppCompatActivity implements
                     return getString(R.string.update_verb);
                 }
             case PRIVATE:
-            case PENDING:
             case TRASHED:
             case SCHEDULED:
             default:
@@ -858,11 +988,7 @@ public class EditPostActivity extends AppCompatActivity implements
         }
 
         // hide soft keyboard
-        View view = getCurrentFocus();
-        if (view != null) {
-            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
-        }
+        ActivityUtils.hideKeyboard(this);
 
         // slide in the photo picker
         if (!isAlreadyShowing) {
@@ -969,6 +1095,9 @@ public class EditPostActivity extends AppCompatActivity implements
                 ActivityLauncher.showStockMediaPickerForResult(
                         this, mSite, RequestCodes.STOCK_MEDIA_PICKER_MULTI_SELECT);
                 break;
+            case GIPHY:
+                ActivityLauncher.showGiphyPickerForResult(this, mSite, RequestCodes.GIPHY_PICKER);
+                break;
         }
     }
 
@@ -976,7 +1105,7 @@ public class EditPostActivity extends AppCompatActivity implements
     public boolean onCreateOptionsMenu(Menu menu) {
         super.onCreateOptionsMenu(menu);
         MenuInflater inflater = getMenuInflater();
-        if (mShowNewEditor || mShowAztecEditor) {
+        if (isModernEditor()) {
             inflater.inflate(R.menu.edit_post, menu);
         } else {
             inflater.inflate(R.menu.edit_post_legacy, menu);
@@ -992,38 +1121,101 @@ public class EditPostActivity extends AppCompatActivity implements
             showMenuItems = false;
         }
 
-        MenuItem previewMenuItem = menu.findItem(R.id.menu_preview_post);
-        MenuItem settingsMenuItem = menu.findItem(R.id.menu_post_settings);
+
         MenuItem saveAsDraftMenuItem = menu.findItem(R.id.menu_save_as_draft_or_publish);
+        MenuItem previewMenuItem = menu.findItem(R.id.menu_preview_post);
         MenuItem viewHtmlModeMenuItem = menu.findItem(R.id.menu_html_mode);
+        MenuItem historyMenuItem = menu.findItem(R.id.menu_history);
+        MenuItem settingsMenuItem = menu.findItem(R.id.menu_post_settings);
         MenuItem discardChanges = menu.findItem(R.id.menu_discard_changes);
+
+        if (saveAsDraftMenuItem != null && mPost != null) {
+            if (PostStatus.fromPost(mPost) == PostStatus.PRIVATE) {
+                saveAsDraftMenuItem.setVisible(false);
+            } else {
+                saveAsDraftMenuItem.setVisible(showMenuItems);
+                saveAsDraftMenuItem.setTitle(getSaveAsADraftButtonText());
+            }
+        }
 
         if (previewMenuItem != null) {
             previewMenuItem.setVisible(showMenuItems);
         }
 
-        if (settingsMenuItem != null) {
-            settingsMenuItem.setVisible(showMenuItems);
-        }
-
-        if (saveAsDraftMenuItem != null) {
-            saveAsDraftMenuItem.setVisible(showMenuItems);
-            if (mPost != null) {
-                saveAsDraftMenuItem.setTitle(getSaveAsADraftButtonText());
-            }
-        }
-
         if (viewHtmlModeMenuItem != null) {
-            viewHtmlModeMenuItem.setVisible(mEditorFragment instanceof AztecEditorFragment && showMenuItems);
+            viewHtmlModeMenuItem.setVisible(((mEditorFragment instanceof AztecEditorFragment)
+                                             || (mEditorFragment instanceof GutenbergEditorFragment)) && showMenuItems);
             viewHtmlModeMenuItem.setTitle(mHtmlModeMenuStateOn ? R.string.menu_visual_mode : R.string.menu_html_mode);
         }
 
+        if (historyMenuItem != null) {
+            boolean hasHistory = !mIsNewPost && (mSite.isWPCom() || mSite.isJetpackConnected());
+            historyMenuItem.setVisible(showMenuItems && hasHistory);
+        }
+
+        if (settingsMenuItem != null) {
+            settingsMenuItem.setTitle(mIsPage ? R.string.page_settings : R.string.post_settings);
+            settingsMenuItem.setVisible(showMenuItems);
+        }
+
+        showHideDiscardLocalChangesMenuOption(showMenuItems, discardChanges);
+
+        // Set text of the save button in the ActionBar
+        if (mPost != null) {
+            MenuItem saveMenuItem = menu.findItem(R.id.menu_save_post);
+            if (saveMenuItem != null) {
+                saveMenuItem.setTitle(getSaveButtonText());
+                saveMenuItem.setVisible(mViewPager != null && mViewPager.getCurrentItem() != PAGE_HISTORY);
+            }
+        }
+
+        MenuItem switchToAztecMenuItem = menu.findItem(R.id.menu_switch_to_aztec);
+        MenuItem switchToGutenbergMenuItem = menu.findItem(R.id.menu_switch_to_gutenberg);
+
+        if (mShowGutenbergEditor) {
+            // we're showing Gutenberg so, just offer the Aztec switch
+            switchToAztecMenuItem.setVisible(true);
+            switchToGutenbergMenuItem.setVisible(false);
+        } else {
+            // we're showing Aztec so, hide the "Switch to Aztec" menu
+            switchToAztecMenuItem.setVisible(false);
+
+            // Check whether the content has blocks.
+            boolean hasBlocks = false;
+            boolean isEmpty = false;
+            try {
+                final String content = (String) mEditorFragment.getContent(mPost.getContent());
+                hasBlocks = PostUtils.contentContainsGutenbergBlocks(content);
+                isEmpty = TextUtils.isEmpty(content);
+            } catch (EditorFragmentNotAddedException e) {
+                // legacy exception; just ignore.
+            }
+
+            // if content has blocks or empty, offer the switch to Gutenberg. The block editor doesn't have good
+            //  "Classic Block" support yet so, don't offer a switch to it if content doesn't have blocks. If the post
+            //  is empty but the user hasn't enabled "Use Gutenberg for new posts" App setting, don't offer the switch.
+            switchToGutenbergMenuItem.setVisible(hasBlocks || (AppPrefs.isGutenbergDefaultForNewPosts() && isEmpty));
+        }
+
+        return super.onPrepareOptionsMenu(menu);
+    }
+
+    private void showHideDiscardLocalChangesMenuOption(boolean showMenuItems, MenuItem discardChanges) {
         if (discardChanges != null) {
+            if (mIsNewPost) {
+                // by "local changes" we mean changes that are only local (that is to say, are not in the remote yet).
+                // if this is a new Post, then there aren't any local changes to discard yet (everything is local).
+                discardChanges.setVisible(false);
+                return;
+            }
+
             if (mPost != null && showMenuItems) {
-                boolean showDiscardChanges = mPost.isLocallyChanged();
+                // don't show Discard Local Changes option if it's a completely local draft
+                boolean showDiscardChanges = mPost.isLocallyChanged() && !mPost.isLocalDraft();
                 if (mEditorFragment instanceof AztecEditorFragment) {
                     if (((AztecEditorFragment) mEditorFragment).hasHistory()
-                        && ((AztecEditorFragment) mEditorFragment).canUndo()) {
+                        && ((AztecEditorFragment) mEditorFragment).canUndo()
+                            && !mPost.isLocalDraft()) {
                         showDiscardChanges = true;
                     } else {
                         // we don't have history, so hide/show depending on the original post flag value
@@ -1035,22 +1227,13 @@ public class EditPostActivity extends AppCompatActivity implements
                 discardChanges.setVisible(false);
             }
         }
-
-        // Set text of the save button in the ActionBar
-        if (mPost != null) {
-            MenuItem saveMenuItem = menu.findItem(R.id.menu_save_post);
-            if (saveMenuItem != null) {
-                saveMenuItem.setTitle(getSaveButtonText());
-            }
-        }
-
-        return super.onPrepareOptionsMenu(menu);
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode,
                                            @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         boolean allGranted = WPPermissionUtils.setPermissionListAsked(
                 this, requestCode, permissions, grantResults, true);
 
@@ -1077,19 +1260,24 @@ public class EditPostActivity extends AppCompatActivity implements
                 ImageSettingsDialogFragment imFragment = (ImageSettingsDialogFragment) fragment;
                 imFragment.dismissFragment();
             }
+
             return false;
         }
+
         if (mViewPager.getCurrentItem() > PAGE_CONTENT) {
             if (mViewPager.getCurrentItem() == PAGE_SETTINGS) {
                 mEditorFragment.setFeaturedImageId(mPost.getFeaturedImageId());
             }
+
             mViewPager.setCurrentItem(PAGE_CONTENT);
             invalidateOptionsMenu();
         } else if (isPhotoPickerShowing()) {
             hidePhotoPicker();
         } else {
+            mPostEditorAnalyticsSession.setOutcome(Outcome.SAVE);
             savePostAndOptionallyFinish(true);
         }
+
         return true;
     }
 
@@ -1108,26 +1296,30 @@ public class EditPostActivity extends AppCompatActivity implements
         if (itemId == R.id.menu_save_post || (itemId == R.id.menu_save_as_draft_or_publish && !userCanPublishPosts)) {
             if (AppPrefs.isAsyncPromoRequired() && userCanPublishPosts
                 && PostStatus.fromPost(mPost) != PostStatus.DRAFT) {
-                showAsyncPromoDialog();
+                showAsyncPromoDialog(mPost.isPage(), PostStatus.fromPost(mPost) == PostStatus.SCHEDULED);
             } else {
                 showPublishConfirmationOrUpdateIfNotLocalDraft();
             }
         } else {
             // Disable other action bar buttons while a media upload is in progress
             // (unnecessary for Aztec since it supports progress reattachment)
-            if (!mShowAztecEditor && (mEditorFragment.isUploadingMedia() || mEditorFragment.isActionInProgress())) {
+            if (!(mShowAztecEditor || mShowGutenbergEditor)
+                        && (mEditorFragment.isUploadingMedia() || mEditorFragment.isActionInProgress())) {
                 ToastUtils.showToast(this, R.string.editor_toast_uploading_please_wait, Duration.SHORT);
                 return false;
             }
 
-            if (itemId == R.id.menu_preview_post) {
+            if (itemId == R.id.menu_history) {
+                AnalyticsTracker.track(Stat.REVISIONS_LIST_VIEWED);
+                ActivityUtils.hideKeyboard(this);
+                mViewPager.setCurrentItem(PAGE_HISTORY);
+            } else if (itemId == R.id.menu_preview_post) {
                 mViewPager.setCurrentItem(PAGE_PREVIEW);
             } else if (itemId == R.id.menu_post_settings) {
-                InputMethodManager imm = ((InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE));
-                imm.hideSoftInputFromWindow(getWindow().getDecorView().getWindowToken(), 0);
                 if (mEditPostSettingsFragment != null) {
                     mEditPostSettingsFragment.refreshViews();
                 }
+                ActivityUtils.hideKeyboard(this);
                 mViewPager.setCurrentItem(PAGE_SETTINGS);
             } else if (itemId == R.id.menu_save_as_draft_or_publish) {
                 // save as draft if it's a local post with UNKNOWN status, or PUBLISH if it's a DRAFT (as this
@@ -1141,7 +1333,8 @@ public class EditPostActivity extends AppCompatActivity implements
 
                 // we update the mPost object first, so we can pre-check Post publishability and inform the user
                 updatePostObject();
-                if (PostStatus.fromPost(mPost) == PostStatus.DRAFT) {
+                PostStatus status = PostStatus.fromPost(mPost);
+                if (!isNewPost() && (status == PostStatus.DRAFT || status == PostStatus.PENDING)) {
                     if (isDiscardable()) {
                         String message = getString(
                                 mIsPage ? R.string.error_publish_empty_page : R.string.error_publish_empty_post);
@@ -1150,43 +1343,83 @@ public class EditPostActivity extends AppCompatActivity implements
                     }
                     showPublishConfirmationDialog();
                 } else {
+                    // this is a new post, save as draft
                     if (isDiscardable()) {
                         ToastUtils.showToast(EditPostActivity.this,
                                 getString(R.string.error_save_empty_draft), Duration.SHORT);
                         return false;
                     }
-                    UploadUtils.showSnackbar(findViewById(R.id.editor_activity), R.string.editor_uploading_post);
-                    if (isNewPost()) {
-                        mPost.setStatus(PostStatus.DRAFT.toString());
+
+                    if (status == PostStatus.SCHEDULED && isNewPost()) {
+                        // if user pressed `Save as draft` on a new, Scheduled Post, re-convert it to draft.
+                        if (mEditPostSettingsFragment != null) {
+                            mEditPostSettingsFragment.updatePostStatus(PostStatus.DRAFT.toString());
+                            ToastUtils.showToast(EditPostActivity.this,
+                                    getString(R.string.editor_post_converted_back_to_draft), Duration.SHORT);
+                        }
                     }
+                    UploadUtils.showSnackbar(findViewById(R.id.editor_activity), R.string.editor_uploading_post);
+                    mPostEditorAnalyticsSession.setOutcome(Outcome.SAVE);
                     savePostAndOptionallyFinish(false);
                 }
             } else if (itemId == R.id.menu_html_mode) {
                 // toggle HTML mode
                 if (mEditorFragment instanceof AztecEditorFragment) {
                     ((AztecEditorFragment) mEditorFragment).onToolbarHtmlButtonClicked();
-                    UploadUtils.showSnackbarSuccessActionOrange(findViewById(R.id.editor_activity),
-                            mHtmlModeMenuStateOn ? R.string.menu_html_mode_done_snackbar
-                                    : R.string.menu_visual_mode_done_snackbar,
-                            R.string.menu_undo_snackbar_action,
-                            new View.OnClickListener() {
-                                @Override
-                                public void onClick(View view) {
-                                    // switch back
-                                    ((AztecEditorFragment) mEditorFragment).onToolbarHtmlButtonClicked();
-                                }
-                            });
+                    toggledHtmlModeSnackbar(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            // switch back
+                            ((AztecEditorFragment) mEditorFragment).onToolbarHtmlButtonClicked();
+                        }
+                    });
+                } else if (mEditorFragment instanceof GutenbergEditorFragment) {
+                    ((GutenbergEditorFragment) mEditorFragment).onToggleHtmlMode();
+                    toggledHtmlModeSnackbar(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            // switch back
+                            ((GutenbergEditorFragment) mEditorFragment).onToggleHtmlMode();
+                        }
+                    });
                 }
             } else if (itemId == R.id.menu_discard_changes) {
-                AnalyticsTracker.track(Stat.EDITOR_DISCARDED_CHANGES);
-                showDialogProgress(true);
-                mPostWithLocalChanges = mPost.clone();
-                mIsDiscardingChanges = true;
-                RemotePostPayload payload = new RemotePostPayload(mPost, mSite);
-                mDispatcher.dispatch(PostActionBuilder.newFetchPostAction(payload));
+                if (NetworkUtils.isNetworkAvailable(getBaseContext())) {
+                    AnalyticsTracker.track(Stat.EDITOR_DISCARDED_CHANGES);
+                    showDialogProgress(true);
+                    mPostForUndo = mPost.clone();
+                    mIsDiscardingChanges = true;
+                    RemotePostPayload payload = new RemotePostPayload(mPost, mSite);
+                    mDispatcher.dispatch(PostActionBuilder.newFetchPostAction(payload));
+                } else {
+                    showDialogError(R.string.local_changes_discarding_no_connection,
+                            R.string.dialog_button_ok,
+                            TAG_DISCARDING_CHANGES_NO_NETWORK_DIALOG,
+                            false);
+                }
+            } else if (itemId == R.id.menu_switch_to_aztec) {
+                // let's finish this editing instance and start again, but not letting Gutenberg be used
+                mRestartEditorOption = RestartEditorOptions.RESTART_SUPPRESS_GUTENBERG;
+                mPostEditorAnalyticsSession.switchEditor(Editor.CLASSIC);
+                mPostEditorAnalyticsSession.setOutcome(Outcome.SAVE);
+                savePostAndOptionallyFinish(true);
+            } else if (itemId == R.id.menu_switch_to_gutenberg) {
+                // let's finish this editing instance and start again, but let GB be used
+                mRestartEditorOption = RestartEditorOptions.RESTART_DONT_SUPPRESS_GUTENBERG;
+                mPostEditorAnalyticsSession.switchEditor(Editor.GUTENBERG);
+                mPostEditorAnalyticsSession.setOutcome(Outcome.SAVE);
+                savePostAndOptionallyFinish(true);
             }
         }
         return false;
+    }
+
+    private void toggledHtmlModeSnackbar(View.OnClickListener onUndoClickListener) {
+        UploadUtils.showSnackbarSuccessActionOrange(findViewById(R.id.editor_activity),
+                mHtmlModeMenuStateOn ? R.string.menu_html_mode_done_snackbar
+                        : R.string.menu_visual_mode_done_snackbar,
+                R.string.menu_undo_snackbar_action,
+                onUndoClickListener);
     }
 
     private void refreshEditorContent() {
@@ -1194,11 +1427,12 @@ public class EditPostActivity extends AppCompatActivity implements
         fillContentEditorFields();
     }
 
-    private void showDialogError() {
+    private void showDialogError(@StringRes int resIdMessage, @StringRes int resIdPositiveButton, String tag,
+                                 boolean showCancel) {
         BasicFragmentDialog dialog = new BasicFragmentDialog();
-        dialog.initialize(TAG_DISCARDING_CHANGES_ERROR_DIALOG, "", getString(R.string.local_changes_discarding_error),
-                getString(R.string.contact_support), getString(R.string.cancel), null);
-        dialog.show(getSupportFragmentManager(), TAG_DISCARDING_CHANGES_ERROR_DIALOG);
+        dialog.initialize(tag, "", getString(resIdMessage),
+                getString(resIdPositiveButton), showCancel ? getString(R.string.cancel) : null, null);
+        dialog.show(getSupportFragmentManager(), tag);
     }
 
     private void showDialogProgress(boolean show) {
@@ -1206,7 +1440,9 @@ public class EditPostActivity extends AppCompatActivity implements
             mProgressDialog = new ProgressDialog(this);
             mProgressDialog.setCancelable(false);
             mProgressDialog.setIndeterminate(true);
-            mProgressDialog.setMessage(getString(R.string.local_changes_discarding));
+            mProgressDialog.setMessage(mIsDiscardingChanges
+                    ? getString(R.string.local_changes_discarding)
+                    : getString(R.string.history_loading_revision));
             mProgressDialog.show();
         } else if (mProgressDialog != null) {
             mProgressDialog.dismiss();
@@ -1217,7 +1453,14 @@ public class EditPostActivity extends AppCompatActivity implements
 
     private void toggleHtmlModeOnMenu() {
         mHtmlModeMenuStateOn = !mHtmlModeMenuStateOn;
+        trackPostSessionEditorModeSwitch();
         invalidateOptionsMenu();
+    }
+
+    private void trackPostSessionEditorModeSwitch() {
+        boolean isGutenberg = mEditorFragment instanceof GutenbergEditorFragment;
+        mPostEditorAnalyticsSession.switchEditor(
+                mHtmlModeMenuStateOn ? Editor.HTML : (isGutenberg ? Editor.GUTENBERG : Editor.CLASSIC));
     }
 
     private void showPublishConfirmationDialog() {
@@ -1237,12 +1480,27 @@ public class EditPostActivity extends AppCompatActivity implements
         // if post is a draft, first make sure to confirm the PUBLISH action, in case
         // the user tapped on it accidentally
         PostStatus status = PostStatus.fromPost(mPost);
-        if (userCanPublishPosts() && (status == PostStatus.PUBLISHED || status == PostStatus.UNKNOWN)
+        if (userCanPublishPosts() && (status == PostStatus.DRAFT || status == PostStatus.UNKNOWN)
             && mPost.isLocalDraft()) {
             showPublishConfirmationDialog();
         } else {
             // otherwise, if they're updating a Post, just go ahead and save it to the server
             publishPost();
+        }
+    }
+
+    private void showGutenbergInformativeDialog() {
+        // Show the GB informative dialog on editing GB posts
+        if (!mIsNewPost && !AppPrefs.isGutenbergInformativeDialogDisabled()) {
+            final PromoDialog gbInformativeDialog = new PromoDialog();
+            gbInformativeDialog.initialize(TAG_GB_INFORMATIVE_DIALOG,
+                    getString(R.string.dialog_gutenberg_informative_title),
+                    mPost.isPage() ? getString(R.string.dialog_gutenberg_informative_description_page)
+                    : getString(R.string.dialog_gutenberg_informative_description_post),
+                    getString(org.wordpress.android.editor.R.string.dialog_button_ok));
+
+            gbInformativeDialog.show(getSupportFragmentManager(), TAG_GB_INFORMATIVE_DIALOG);
+            AppPrefs.setGutenbergInformativeDialogDisabled(true);
         }
     }
 
@@ -1289,18 +1547,17 @@ public class EditPostActivity extends AppCompatActivity implements
     }
 
     private void launchPictureLibrary() {
-        WPMediaUtils.launchPictureLibrary(this, true);
-        AppLockManager.getInstance().setExtendedTimeout();
+        // don't allow multiple selection for Gutenberg, as we're on a single image block for now
+        WPMediaUtils.launchPictureLibrary(this, !mShowGutenbergEditor);
     }
 
     private void launchVideoLibrary() {
-        WPMediaUtils.launchVideoLibrary(this, true);
-        AppLockManager.getInstance().setExtendedTimeout();
+        // don't allow multiple selection for Gutenberg, as we're on a single image block for now
+        WPMediaUtils.launchVideoLibrary(this, !mShowGutenbergEditor);
     }
 
     private void launchVideoCamera() {
         WPMediaUtils.launchVideoCamera(this);
-        AppLockManager.getInstance().setExtendedTimeout();
     }
 
     private void showErrorAndFinish(int errorMessageId) {
@@ -1330,7 +1587,7 @@ public class EditPostActivity extends AppCompatActivity implements
                 AnalyticsTracker.Stat.EDITOR_CREATED_POST,
                 mSiteStore.getSiteByLocalId(mPost.getLocalSiteId()),
                 properties
-                                           );
+        );
     }
 
     private synchronized void updatePostObject(boolean isAutosave) throws EditorFragmentNotAddedException {
@@ -1342,7 +1599,7 @@ public class EditPostActivity extends AppCompatActivity implements
         // Update post object from fragment fields
         boolean postTitleOrContentChanged = false;
         if (mEditorFragment != null) {
-            if (mShowNewEditor || mShowAztecEditor) {
+            if (isModernEditor()) {
                 postTitleOrContentChanged =
                         updatePostContentNewEditor(isAutosave, (String) mEditorFragment.getTitle(),
                                 (String) mEditorFragment.getContent(mPost.getContent()));
@@ -1391,7 +1648,7 @@ public class EditPostActivity extends AppCompatActivity implements
                     this,
                     org.wordpress.android.editor.R.drawable.ic_gridicons_image,
                     aztecEditorFragment.getMaxMediaSize()
-                                                                                                    );
+            );
             mAztecImageLoader = new AztecImageLoader(getBaseContext(), mImageManager, loadingImagePlaceholder);
             aztecEditorFragment.setAztecImageLoader(mAztecImageLoader);
             aztecEditorFragment.setLoadingImagePlaceholder(loadingImagePlaceholder);
@@ -1400,7 +1657,7 @@ public class EditPostActivity extends AppCompatActivity implements
                     this,
                     org.wordpress.android.editor.R.drawable.ic_gridicons_video_camera,
                     aztecEditorFragment.getMaxMediaSize()
-                                                                                                    );
+            );
             aztecEditorFragment.setAztecVideoLoader(new AztecVideoLoader(getBaseContext(), loadingVideoPlaceholder));
             aztecEditorFragment.setLoadingVideoPlaceholder(loadingVideoPlaceholder);
 
@@ -1415,7 +1672,7 @@ public class EditPostActivity extends AppCompatActivity implements
                                        && !PostStatus.PRIVATE.toString().equals(getPost().getStatus());
                             }
                         }
-                                                             );
+                );
             }
             aztecEditorFragment.setExternalLogger(new AztecLog.ExternalLogger() {
                 @Override
@@ -1448,14 +1705,40 @@ public class EditPostActivity extends AppCompatActivity implements
     }
 
     @Override
+    public void onNegativeClicked(@NonNull String instanceTag) {
+        switch (instanceTag) {
+            case ASYNC_PROMO_DIALOG_TAG:
+            case TAG_DISCARDING_CHANGES_ERROR_DIALOG:
+            case TAG_DISCARDING_CHANGES_NO_NETWORK_DIALOG:
+            case TAG_PUBLISH_CONFIRMATION_DIALOG:
+            case TAG_REMOVE_FAILED_UPLOADS_DIALOG:
+                break;
+            default:
+                AppLog.e(T.EDITOR, "Dialog instanceTag is not recognized");
+                throw new UnsupportedOperationException("Dialog instanceTag is not recognized");
+        }
+    }
+
+
+    @Override
+    public void onNeutralClicked(@NonNull String instanceTag) {
+    }
+
+    @Override
     public void onPositiveClicked(@NonNull String instanceTag) {
         switch (instanceTag) {
+            case TAG_DISCARDING_CHANGES_NO_NETWORK_DIALOG:
+                // no op
+                break;
             case TAG_DISCARDING_CHANGES_ERROR_DIALOG:
                 mZendeskHelper.createNewTicket(this, Origin.DISCARD_CHANGES, mSite);
                 break;
             case TAG_PUBLISH_CONFIRMATION_DIALOG:
                 mPost.setStatus(PostStatus.PUBLISHED.toString());
+                mPostEditorAnalyticsSession.setOutcome(Outcome.PUBLISH);
                 publishPost();
+                AppRatingDialog.INSTANCE
+                        .incrementInteractions(APP_REVIEWS_EVENT_INCREMENTED_BY_PUBLISHING_POST_OR_PAGE);
                 break;
             case TAG_REMOVE_FAILED_UPLOADS_DIALOG:
                 // Clear failed uploads
@@ -1464,20 +1747,8 @@ public class EditPostActivity extends AppCompatActivity implements
             case ASYNC_PROMO_DIALOG_TAG:
                 publishPost();
                 break;
-            default:
-                AppLog.e(T.EDITOR, "Dialog instanceTag is not recognized");
-                throw new UnsupportedOperationException("Dialog instanceTag is not recognized");
-        }
-    }
-
-    @Override
-    public void onNegativeClicked(@NonNull String instanceTag) {
-        switch (instanceTag) {
-            case ASYNC_PROMO_DIALOG_TAG:
-            case TAG_DISCARDING_CHANGES_ERROR_DIALOG:
-            case TAG_PUBLISH_CONFIRMATION_DIALOG:
-            case TAG_REMOVE_FAILED_UPLOADS_DIALOG:
-                // the dialog is automatically dismissed
+            case TAG_GB_INFORMATIVE_DIALOG:
+                // no op
                 break;
             default:
                 AppLog.e(T.EDITOR, "Dialog instanceTag is not recognized");
@@ -1486,7 +1757,7 @@ public class EditPostActivity extends AppCompatActivity implements
     }
 
     @Override
-    public void onLinkClicked(@NotNull String instanceTag) {
+    public void onLinkClicked(@NonNull String instanceTag) {
         switch (instanceTag) {
             case ASYNC_PROMO_DIALOG_TAG:
                 startActivity(ReleaseNotesActivity.createIntent(EditPostActivity.this, WHAT_IS_NEW_IN_MOBILE_URL,
@@ -1531,14 +1802,50 @@ public class EditPostActivity extends AppCompatActivity implements
         // update the original post object, so we'll know of new changes
         mOriginalPost = mPost.clone();
 
-        // update the list of uploading ids
-        mMediaMarkedUploadingOnStartIds =
-                AztecEditorFragment.getMediaMarkedUploadingInPostContent(this, mPost.getContent());
+        if (mShowAztecEditor) {
+            // update the list of uploading ids
+            mMediaMarkedUploadingOnStartIds =
+                    AztecEditorFragment.getMediaMarkedUploadingInPostContent(this, mPost.getContent());
+        }
     }
 
     @Override
     public void onBackPressed() {
         handleBackPressed();
+    }
+
+    @Override
+    public void onHistoryItemClicked(@NonNull Revision revision, @NonNull ArrayList<Revision> revisions) {
+        AnalyticsTracker.track(Stat.REVISIONS_DETAIL_VIEWED_FROM_LIST);
+        mRevision = revision;
+
+        ActivityLauncher.viewHistoryDetailForResult(this, mRevision, revisions);
+    }
+
+    private void loadRevision() {
+        showDialogProgress(true);
+        mPostForUndo = mPost.clone();
+        mPost.setTitle(mRevision.getPostTitle());
+        mPost.setContent(mRevision.getPostContent());
+        mPost.setIsLocallyChanged(true);
+        mPost.setDateLocallyChanged(DateTimeUtils.iso8601FromTimestamp(System.currentTimeMillis() / 1000));
+        refreshEditorContent();
+
+        Snackbar.make(mViewPager, getString(R.string.history_loaded_revision),
+                AccessibilityUtils.getSnackbarDuration(EditPostActivity.this, 4000))
+                .setAction(getString(R.string.undo), new OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        AnalyticsTracker.track(Stat.REVISIONS_LOAD_UNDONE);
+                        RemotePostPayload payload = new RemotePostPayload(mPostForUndo, mSite);
+                        mDispatcher.dispatch(PostActionBuilder.newFetchPostAction(payload));
+                        mPost = mPostForUndo.clone();
+                        refreshEditorContent();
+                    }
+                })
+                .show();
+
+        showDialogProgress(false);
     }
 
     private boolean isNewPost() {
@@ -1579,7 +1886,7 @@ public class EditPostActivity extends AppCompatActivity implements
             savePostToDb();
             PostUtils.trackSavePostAnalytics(mPost, mSiteStore.getSiteByLocalId(mPost.getLocalSiteId()));
 
-            UploadService.setLegacyMode(!mShowNewEditor && !mShowAztecEditor);
+            UploadService.setLegacyMode(!isModernEditor());
             if (mIsFirstTimePublish) {
                 UploadService.uploadPostAndTrackAnalytics(EditPostActivity.this, mPost);
             } else {
@@ -1618,7 +1925,7 @@ public class EditPostActivity extends AppCompatActivity implements
                 // Changes have been made - save the post and ask for the post list to refresh
                 // We consider this being "manual save", it will replace some Android "spans" by an html
                 // or a shortcode replacement (for instance for images and galleries)
-                if (mShowNewEditor || mShowAztecEditor) {
+                if (isModernEditor()) {
                     // Update the post object directly, without re-fetching the fields from the EditorFragment
                     updatePostContentNewEditor(false, mPost.getTitle(), mPost.getContent());
                 }
@@ -1649,7 +1956,11 @@ public class EditPostActivity extends AppCompatActivity implements
         i.putExtra(EXTRA_IS_PAGE, mIsPage);
         i.putExtra(EXTRA_HAS_CHANGES, saved);
         i.putExtra(EXTRA_POST_LOCAL_ID, mPost.getId());
+        i.putExtra(EXTRA_POST_REMOTE_ID, mPost.getRemotePostId());
         i.putExtra(EXTRA_IS_DISCARDABLE, discardable);
+        i.putExtra(EXTRA_RESTART_EDITOR, mRestartEditorOption.name());
+        i.putExtra(STATE_KEY_EDITOR_SESSION_DATA, mPostEditorAnalyticsSession);
+        i.putExtra(EXTRA_IS_NEW_POST, mIsNewPost);
         setResult(RESULT_OK, i);
     }
 
@@ -1671,6 +1982,7 @@ public class EditPostActivity extends AppCompatActivity implements
                                           public void onClick(DialogInterface dialog, int id) {
                                               ToastUtils.showToast(EditPostActivity.this,
                                                                    getString(R.string.toast_saving_post_as_draft));
+                                              mPostEditorAnalyticsSession.setOutcome(Outcome.SAVE);
                                               savePostAndOptionallyFinish(true);
                                           }
                                       })
@@ -1723,12 +2035,17 @@ public class EditPostActivity extends AppCompatActivity implements
                                 }
                             });
                         } else {
+                            mPostEditorAnalyticsSession.setOutcome(Outcome.PUBLISH);
                             savePostOnlineAndFinishAsync(isFirstTimePublish, true);
                         }
                     } else {
+                        mPostEditorAnalyticsSession.setOutcome(Outcome.PUBLISH);
                         savePostLocallyAndFinishAsync(true);
                     }
                 } else {
+                    // the user has just tapped on "PUBLISH" on an empty post, make sure to set the status back to the
+                    // original post's status as we could not proceed with the action
+                    mPost.setStatus(mOriginalPost.getStatus());
                     EditPostActivity.this.runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
@@ -1762,7 +2079,6 @@ public class EditPostActivity extends AppCompatActivity implements
             @Override
             public void run() {
                 // check if the opened post had some unsaved local changes
-                boolean hasLocalChanges = mPost.isLocallyChanged() || mPost.isLocalDraft();
                 boolean isFirstTimePublish = isFirstTimePublish();
 
                 boolean postUpdateSuccessful = updatePostObject();
@@ -1787,24 +2103,14 @@ public class EditPostActivity extends AppCompatActivity implements
                 definitelyDeleteBackspaceDeletedMediaItems();
 
                 if (shouldSave) {
-                    if (isNewPost()) {
-                        // new post - user just left the editor without publishing, they probably want
-                        // to keep the post as a draft
-                        mPost.setStatus(PostStatus.DRAFT.toString());
-                        if (mEditPostSettingsFragment != null) {
-                            runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    mEditPostSettingsFragment.updatePostStatusRelatedViews();
-                                }
-                            });
-                        }
-                    }
-
-                    if (PostStatus.fromPost(mPost) == PostStatus.DRAFT && isPublishable && !hasFailedMedia()
-                        && NetworkUtils.isNetworkAvailable(getBaseContext())) {
+                    PostStatus status = PostStatus.fromPost(mPost);
+                    boolean isNotRestarting = mRestartEditorOption == RestartEditorOptions.NO_RESTART;
+                    if ((status == PostStatus.DRAFT || status == PostStatus.PENDING) && isPublishable
+                        && !hasFailedMedia() && NetworkUtils.isNetworkAvailable(getBaseContext()) && isNotRestarting) {
+                        mPostEditorAnalyticsSession.setOutcome(Outcome.SAVE);
                         savePostOnlineAndFinishAsync(isFirstTimePublish, doFinish);
                     } else {
+                        mPostEditorAnalyticsSession.setOutcome(Outcome.SAVE);
                         savePostLocallyAndFinishAsync(doFinish);
                     }
                 } else {
@@ -1814,6 +2120,8 @@ public class EditPostActivity extends AppCompatActivity implements
                     }
                     removePostOpenInEditorStickyEvent();
                     if (doFinish) {
+                        // if we shouldn't save and we should exit, set the session tracking outcome to CANCEL
+                        mPostEditorAnalyticsSession.setOutcome(Outcome.CANCEL);
                         finish();
                     }
                 }
@@ -1825,8 +2133,9 @@ public class EditPostActivity extends AppCompatActivity implements
         boolean hasLocalChanges = mPost.isLocallyChanged() || mPost.isLocalDraft();
         boolean hasChanges = PostUtils.postHasEdits(mOriginalPost, mPost);
         boolean isPublishable = PostUtils.isPublishable(mPost);
-        boolean hasUnpublishedLocalDraftChanges = PostStatus.fromPost(mPost) == PostStatus.DRAFT
-                                                  && isPublishable && hasLocalChanges;
+        boolean hasUnpublishedLocalDraftChanges = (PostStatus.fromPost(mPost) == PostStatus.DRAFT
+                                                   || PostStatus.fromPost(mPost) == PostStatus.PENDING)
+                                                      && isPublishable && hasLocalChanges;
 
         // if post was modified or has unpublished local changes, save it
         return (mOriginalPost != null && hasChanges)
@@ -1839,9 +2148,9 @@ public class EditPostActivity extends AppCompatActivity implements
     }
 
     private boolean isFirstTimePublish() {
-        return (PostStatus.fromPost(mPost) == PostStatus.UNKNOWN || PostStatus.fromPost(mPost) == PostStatus.PUBLISHED)
-
-               && (mPost.isLocalDraft() || PostStatus.fromPost(mOriginalPost) == PostStatus.DRAFT);
+        return (PostStatus.fromPost(mPost) == PostStatus.UNKNOWN || PostStatus.fromPost(mPost) == PostStatus.DRAFT)
+               && (mPost.isLocalDraft() || PostStatus.fromPost(mOriginalPost) == PostStatus.DRAFT
+                   || PostStatus.fromPost(mOriginalPost) == PostStatus.PENDING);
     }
 
     /**
@@ -1889,7 +2198,7 @@ public class EditPostActivity extends AppCompatActivity implements
      * one of the sections/tabs/pages.
      */
     public class SectionsPagerAdapter extends FragmentPagerAdapter {
-        private static final int NUM_PAGES_EDITOR = 3;
+        private static final int NUM_PAGES_EDITOR = 4;
 
         public SectionsPagerAdapter(FragmentManager fm) {
             super(fm);
@@ -1901,7 +2210,13 @@ public class EditPostActivity extends AppCompatActivity implements
             switch (position) {
                 case 0:
                     // TODO: Remove editor options after testing.
-                    if (mShowAztecEditor) {
+                    if (mShowGutenbergEditor) {
+                        // Show the GB informative dialog on editing GB posts
+                        showGutenbergInformativeDialog();
+                        String languageString = LocaleManager.getLanguage(EditPostActivity.this);
+                        String wpcomLocaleSlug = languageString.replace("_", "-").toLowerCase(Locale.ENGLISH);
+                        return GutenbergEditorFragment.newInstance("", "", mIsNewPost, wpcomLocaleSlug);
+                    } else if (mShowAztecEditor) {
                         return AztecEditorFragment.newInstance("", "",
                                                                AppPrefs.isAztecEditorToolbarExpanded());
                     } else if (mShowNewEditor) {
@@ -1912,6 +2227,8 @@ public class EditPostActivity extends AppCompatActivity implements
                     }
                 case 1:
                     return EditPostSettingsFragment.newInstance();
+                case 3:
+                    return HistoryListFragment.Companion.newInstance(mPost, mSite);
                 default:
                     return EditPostPreviewFragment.newInstance(mPost);
             }
@@ -1945,7 +2262,7 @@ public class EditPostActivity extends AppCompatActivity implements
                         // Set up custom headers for the visual editor's internal WebView
                         mEditorFragment.setCustomHttpHeader("User-Agent", WordPress.getUserAgent());
 
-                        reattachUploadingMedia();
+                        reattachUploadingMediaForAztec();
                     }
                     break;
                 case 1:
@@ -2012,27 +2329,12 @@ public class EditPostActivity extends AppCompatActivity implements
     }
 
     private String getUploadErrorHtml(String mediaId, String path) {
-        String replacement;
-        if (Build.VERSION.SDK_INT >= 19) {
-            replacement =
-                    String.format(Locale.US,
-                                  "<span id=\"img_container_%s\" class=\"img_container failed\" data-failed=\"%s\">"
-                                  + "<progress id=\"progress_%s\" value=\"0\" class=\"wp_media_indicator failed\" "
-                                  + "contenteditable=\"false\"></progress>"
-                                  + "<img data-wpid=\"%s\" src=\"%s\" alt=\"\" class=\"failed\"></span>",
-                                  mediaId, getString(R.string.tap_to_try_again), mediaId, mediaId, path);
-        } else {
-            // Before API 19, the WebView didn't support progress tags. Use an upload overlay instead of a progress bar
-            replacement =
-                    String.format(Locale.US,
-                                  "<span id=\"img_container_%s\" class=\"img_container compat failed\" "
-                                  + "contenteditable=\"false\" data-failed=\"%s\">"
-                                  + "<span class=\"upload-overlay failed\" contenteditable=\"false\">"
-                                  + "Uploading…</span><span class=\"upload-overlay-bg\"></span>"
-                                  + "<img data-wpid=\"%s\" src=\"%s\" alt=\"\" class=\"failed\"></span>",
-                                  mediaId, getString(R.string.tap_to_try_again), mediaId, path);
-        }
-        return replacement;
+        return String.format(Locale.US,
+                "<span id=\"img_container_%s\" class=\"img_container failed\" data-failed=\"%s\">"
+                + "<progress id=\"progress_%s\" value=\"0\" class=\"wp_media_indicator failed\" "
+                + "contenteditable=\"false\"></progress>"
+                + "<img data-wpid=\"%s\" src=\"%s\" alt=\"\" class=\"failed\"></span>",
+                mediaId, getString(R.string.tap_to_try_again), mediaId, mediaId, path);
     }
 
     private String migrateLegacyDraft(String content) {
@@ -2083,9 +2385,11 @@ public class EditPostActivity extends AppCompatActivity implements
 
         // Set post title and content
         if (mPost != null) {
-            if (!TextUtils.isEmpty(mPost.getContent()) && !mHasSetPostContent) {
+            // don't avoid calling setContent() for GutenbergEditorFragment so RN gets initialized
+            if ((!TextUtils.isEmpty(mPost.getContent()) || mEditorFragment instanceof GutenbergEditorFragment)
+                && !mHasSetPostContent) {
                 mHasSetPostContent = true;
-                if (mPost.isLocalDraft() && !mShowNewEditor && !mShowAztecEditor) {
+                if (mPost.isLocalDraft() && !isModernEditor()) {
                     // TODO: Unnecessary for new editor, as all images are uploaded right away, even for local drafts
                     // Load local post content in the background, as it may take time to generate images
                     new LoadPostContentTask().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR,
@@ -2100,7 +2404,11 @@ public class EditPostActivity extends AppCompatActivity implements
             }
             if (!TextUtils.isEmpty(mPost.getTitle())) {
                 mEditorFragment.setTitle(mPost.getTitle());
+            } else if (mEditorFragment instanceof GutenbergEditorFragment) {
+                // don't avoid calling setTitle() for GutenbergEditorFragment so RN gets initialized
+                mEditorFragment.setTitle("");
             }
+
             // TODO: postSettingsButton.setText(post.isPage() ? R.string.page_settings : R.string.post_settings);
             mEditorFragment.setLocalDraft(mPost.isLocalDraft());
 
@@ -2122,7 +2430,6 @@ public class EditPostActivity extends AppCompatActivity implements
                                       @Override
                                       public void onMediaCapturePathReady(String mediaCapturePath) {
                                           mMediaCapturePath = mediaCapturePath;
-                                          AppLockManager.getInstance().setExtendedTimeout();
                                       }
                                   });
     }
@@ -2136,6 +2443,7 @@ public class EditPostActivity extends AppCompatActivity implements
         if (text != null) {
             if (title != null) {
                 mEditorFragment.setTitle(title);
+                mPost.setTitle(title);
             }
             // Create an <a href> element around links
             text = AutolinkUtils.autoCreateLinks(text);
@@ -2145,6 +2453,11 @@ public class EditPostActivity extends AppCompatActivity implements
             } else {
                 mEditorFragment.setContent(text);
             }
+
+            // update PostModel
+            mPost.setContent(text);
+            PostUtils.updatePublishDateIfShouldBePublishedImmediately(mPost);
+            mPost.setDateLocallyChanged(DateTimeUtils.iso8601FromTimestamp(System.currentTimeMillis() / 1000));
         }
 
         // Check for shared media
@@ -2269,8 +2582,9 @@ public class EditPostActivity extends AppCompatActivity implements
 
         boolean titleChanged = PostUtils.updatePostTitleIfDifferent(mPost, title);
         boolean contentChanged = PostUtils.updatePostContentIfDifferent(mPost, content);
+        boolean statusChanged = mOriginalPost != null && mPost.getStatus() != mOriginalPost.getStatus();
 
-        if (!mPost.isLocalDraft() && (titleChanged || contentChanged)) {
+        if (!mPost.isLocalDraft() && (titleChanged || contentChanged || statusChanged)) {
             mPost.setIsLocallyChanged(true);
         }
 
@@ -2294,7 +2608,7 @@ public class EditPostActivity extends AppCompatActivity implements
         if (mMediaInsertedOnCreation) {
             mMediaInsertedOnCreation = false;
             contentChanged = true;
-        } else if (compareCurrentMediaMarkedUploadingToOriginal(content)) {
+        } else if (isCurrentMediaMarkedUploadingDifferentToOriginal(content)) {
             contentChanged = true;
         } else {
             contentChanged = mPost.getContent().compareTo(content) != 0;
@@ -2303,7 +2617,9 @@ public class EditPostActivity extends AppCompatActivity implements
             mPost.setContent(content);
         }
 
-        if (!mPost.isLocalDraft() && (titleChanged || contentChanged)) {
+        boolean statusChanged = mOriginalPost != null && mPost.getStatus() != mOriginalPost.getStatus();
+
+        if (!mPost.isLocalDraft() && (titleChanged || contentChanged || statusChanged)) {
             mPost.setIsLocallyChanged(true);
             mPost.setDateLocallyChanged(DateTimeUtils.iso8601FromTimestamp(System.currentTimeMillis() / 1000));
         }
@@ -2317,7 +2633,11 @@ public class EditPostActivity extends AppCompatActivity implements
       * won't be equal and thus we'll know we need to save the Post content as it's changed, given the local
       * URLs will have been replaced with the remote ones.
      */
-    private boolean compareCurrentMediaMarkedUploadingToOriginal(String newContent) {
+    private boolean isCurrentMediaMarkedUploadingDifferentToOriginal(String newContent) {
+        // this method makes use of AztecEditorFragment methods. Make sure to only run if Aztec is the current editor.
+        if (!mShowAztecEditor) {
+            return false;
+        }
         List<String> currentUploadingMedia = AztecEditorFragment.getMediaMarkedUploadingInPostContent(this, newContent);
         Collections.sort(currentUploadingMedia);
         return !mMediaMarkedUploadingOnStartIds.equals(currentUploadingMedia);
@@ -2507,7 +2827,7 @@ public class EditPostActivity extends AppCompatActivity implements
             Uri optimizedMedia = WPMediaUtils.getOptimizedMedia(activity, path, isVideo);
             if (optimizedMedia != null) {
                 mediaUri = optimizedMedia;
-            } else if (mShowNewEditor || mShowAztecEditor) {
+            } else if (isModernEditor()) {
                 // Fix for the rotation issue https://github.com/wordpress-mobile/WordPress-Android/issues/5737
                 if (!mSite.isWPCom()) {
                     // If it's not wpcom we must rotate the picture locally
@@ -2542,7 +2862,7 @@ public class EditPostActivity extends AppCompatActivity implements
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    if (mShowNewEditor || mShowAztecEditor) {
+                    if (isModernEditor()) {
                         addMediaVisualEditor(mediaUri, path);
                     } else {
                         addMediaLegacyEditor(mediaUri, isVideo);
@@ -2563,6 +2883,11 @@ public class EditPostActivity extends AppCompatActivity implements
     private void addMediaLegacyEditor(Uri mediaUri, boolean isVideo) {
         MediaModel mediaModel = buildMediaModel(mediaUri, getContentResolver().getType(mediaUri),
                                                 MediaUploadState.QUEUED);
+        if (mediaModel == null) {
+            ToastUtils.showToast(this, R.string.file_not_found, ToastUtils.Duration.SHORT);
+            return;
+        }
+
         if (isVideo) {
             mediaModel.setTitle(getResources().getString(R.string.video));
         } else {
@@ -2685,6 +3010,39 @@ public class EditPostActivity extends AppCompatActivity implements
                         savePostAsync(null);
                     }
                     break;
+                case RequestCodes.GIPHY_PICKER:
+                    if (data.hasExtra(GiphyPickerActivity.KEY_SAVED_MEDIA_MODEL_LOCAL_IDS)) {
+                        int[] localIds = data.getIntArrayExtra(GiphyPickerActivity.KEY_SAVED_MEDIA_MODEL_LOCAL_IDS);
+                        ArrayList<MediaModel> mediaModels = new ArrayList<>();
+                        for (int localId : localIds) {
+                            mediaModels.add(mMediaStore.getMediaWithLocalId(localId));
+                        }
+
+                        if (isModernEditor()) {
+                            startUploadService(mediaModels);
+                        }
+
+                        for (MediaModel mediaModel : mediaModels) {
+                            mediaModel.setLocalPostId(mPost.getId());
+                            mDispatcher.dispatch(MediaActionBuilder.newUpdateMediaAction(mediaModel));
+
+                            MediaFile mediaFile = FluxCUtils.mediaFileFromMediaModel(mediaModel);
+                            mEditorFragment.appendMediaFile(mediaFile, mediaFile.getFilePath(), mImageLoader);
+                        }
+                    }
+                    break;
+                case RequestCodes.HISTORY_DETAIL:
+                    if (data.hasExtra(KEY_REVISION)) {
+                        mViewPager.setCurrentItem(PAGE_CONTENT);
+
+                        mRevision = data.getParcelableExtra(KEY_REVISION);
+                        new Handler().postDelayed(new Runnable() {
+                            @Override public void run() {
+                                loadRevision();
+                            }
+                        }, getResources().getInteger(R.integer.full_screen_dialog_animation_duration));
+                    }
+                    break;
             }
         }
     }
@@ -2695,15 +3053,9 @@ public class EditPostActivity extends AppCompatActivity implements
             File f = new File(mMediaCapturePath);
             Uri capturedImageUri = Uri.fromFile(f);
             if (addMedia(capturedImageUri, true)) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                    final Intent scanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-                    scanIntent.setData(capturedImageUri);
-                    sendBroadcast(scanIntent);
-                } else {
-                    this.sendBroadcast(new Intent(Intent.ACTION_MEDIA_MOUNTED,
-                                                  Uri.parse("file://" + Environment.getExternalStorageDirectory()))
-                                      );
-                }
+                final Intent scanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+                scanIntent.setData(capturedImageUri);
+                sendBroadcast(scanIntent);
             } else {
                 ToastUtils.showToast(this, R.string.gallery_error, Duration.SHORT);
             }
@@ -2882,19 +3234,30 @@ public class EditPostActivity extends AppCompatActivity implements
      * Starts the upload service to upload selected media.
      */
     private void startUploadService(MediaModel media) {
-        // make sure we only pass items with the QUEUED state to the UploadService
-        if (!MediaUploadState.QUEUED.toString().equals(media.getUploadState())) {
-            return;
-        }
-
         final ArrayList<MediaModel> mediaList = new ArrayList<>();
         mediaList.add(media);
+        startUploadService(mediaList);
+    }
+
+    /**
+     * Start the {@link UploadService} to upload the given {@code mediaModels}.
+     *
+     * Only {@link MediaModel} objects that have {@code MediaUploadState.QUEUED} statuses will be uploaded. .
+     */
+    private void startUploadService(@NonNull List<MediaModel> mediaModels) {
+        // make sure we only pass items with the QUEUED state to the UploadService
+        final ArrayList<MediaModel> queuedMediaModels = new ArrayList<>();
+        for (MediaModel media : mediaModels) {
+            if (MediaUploadState.QUEUED.toString().equals(media.getUploadState())) {
+                queuedMediaModels.add(media);
+            }
+        }
+
         // before starting the service, we need to update the posts' contents so we are sure the service
         // can retrieve it from there on
         savePostAsync(new AfterSavePostListener() {
-            @Override
-            public void onPostSave() {
-                UploadService.uploadMediaFromEditor(EditPostActivity.this, mediaList);
+            @Override public void onPostSave() {
+                UploadService.uploadMediaFromEditor(EditPostActivity.this, queuedMediaModels);
             }
         });
     }
@@ -2907,7 +3270,7 @@ public class EditPostActivity extends AppCompatActivity implements
             Bitmap thumb = ImageUtils.getVideoFrameFromVideo(
                     videoPath,
                     EditorMediaUtils.getMaximumThumbnailSizeForEditor(this)
-                                                            );
+            );
             if (thumb != null) {
                 thumb.compress(Bitmap.CompressFormat.PNG, 75, outputStream);
                 thumbnailPath = outputFile.getAbsolutePath();
@@ -2944,6 +3307,10 @@ public class EditPostActivity extends AppCompatActivity implements
 
         // we need to update media with the local post Id
         MediaModel media = buildMediaModel(uri, mimeType, startingState);
+        if (media == null) {
+            ToastUtils.showToast(this, R.string.file_not_found, ToastUtils.Duration.SHORT);
+            return null;
+        }
         media.setLocalPostId(mPost.getId());
         mDispatcher.dispatch(MediaActionBuilder.newUpdateMediaAction(media));
 
@@ -2954,6 +3321,9 @@ public class EditPostActivity extends AppCompatActivity implements
 
     private MediaModel buildMediaModel(Uri uri, String mimeType, MediaUploadState startingState) {
         MediaModel media = FluxCUtils.mediaModelFromLocalUri(this, uri, mimeType, mMediaStore, mSite.getId());
+        if (media == null) {
+            return null;
+        }
         if (org.wordpress.android.fluxc.utils.MediaUtils.isVideoMimeType(media.getMimeType())) {
             String path = MediaUtils.getRealPathFromURI(this, uri);
             media.setThumbnailUrl(getVideoThumbnail(path));
@@ -2980,12 +3350,25 @@ public class EditPostActivity extends AppCompatActivity implements
     public void onAddMediaClicked() {
         if (isPhotoPickerShowing()) {
             hidePhotoPicker();
+        } else if (mShowGutenbergEditor) {
+            // show the WP media library only since that's the only mode integrated currently from Gutenberg-mobile
+            ActivityLauncher.viewMediaPickerForResult(this, mSite, MediaBrowserType.EDITOR_PICKER);
         } else if (WPMediaUtils.currentUserCanUploadMedia(mSite)) {
             showPhotoPicker();
         } else {
             // show the WP media library instead of the photo picker if the user doesn't have upload permission
             ActivityLauncher.viewMediaPickerForResult(this, mSite, MediaBrowserType.EDITOR_PICKER);
         }
+    }
+
+    @Override
+    public void onAddPhotoClicked() {
+        onPhotoPickerIconClicked(PhotoPickerIcon.ANDROID_CHOOSE_PHOTO);
+    }
+
+    @Override
+    public void onCapturePhotoClicked() {
+        onPhotoPickerIconClicked(PhotoPickerIcon.ANDROID_CAPTURE_PHOTO);
     }
 
     @Override
@@ -3007,6 +3390,27 @@ public class EditPostActivity extends AppCompatActivity implements
     @TargetApi(Build.VERSION_CODES.N)
     private void requestTemporaryPermissions(DragEvent dragEvent) {
         requestDragAndDropPermissions(dragEvent);
+    }
+
+    @Override
+    public void onMediaRetryAllClicked(Set<String> failedMediaIds) {
+        UploadService.cancelFinalNotification(this, mPost);
+        UploadService.cancelFinalNotificationForMedia(this, mSite);
+
+        ArrayList<MediaModel> failedMediaList = new ArrayList<>();
+        for (String mediaId : failedMediaIds) {
+            failedMediaList.add(mMediaStore.getMediaWithLocalId(Integer.valueOf(mediaId)));
+        }
+
+        if (!failedMediaList.isEmpty()) {
+            for (MediaModel mediaModel : failedMediaList) {
+                mediaModel.setUploadState(MediaUploadState.QUEUED);
+                mDispatcher.dispatch(MediaActionBuilder.newUpdateMediaAction(mediaModel));
+            }
+            startUploadService(failedMediaList);
+        }
+
+        AnalyticsTracker.track(Stat.EDITOR_UPLOAD_MEDIA_RETRIED);
     }
 
     @Override
@@ -3078,10 +3482,25 @@ public class EditPostActivity extends AppCompatActivity implements
     @Override
     public void onMediaDeleted(String localMediaId) {
         if (!TextUtils.isEmpty(localMediaId)) {
-            mAztecBackspaceDeletedMediaItemIds.add(localMediaId);
-            UploadService.setDeletedMediaItemIds(mAztecBackspaceDeletedMediaItemIds);
-            // passing false here as we need to keep the media item in case the user wants to undo
-            cancelMediaUpload(StringUtils.stringToInt(localMediaId), false);
+            if (mShowAztecEditor) {
+                mAztecBackspaceDeletedMediaItemIds.add(localMediaId);
+                UploadService.setDeletedMediaItemIds(mAztecBackspaceDeletedMediaItemIds);
+                // passing false here as we need to keep the media item in case the user wants to undo
+                cancelMediaUpload(StringUtils.stringToInt(localMediaId), false);
+            } else if (mShowGutenbergEditor) {
+                MediaModel mediaModel = mMediaStore.getMediaWithLocalId(StringUtils.stringToInt(localMediaId));
+                if (mediaModel == null) {
+                    return;
+                }
+
+                // also make sure it's not being uploaded anywhere else (maybe on some other Post,
+                // simultaneously)
+                if (mediaModel.getUploadState() != null
+                    && MediaUtils.isLocalFile(mediaModel.getUploadState().toLowerCase(Locale.ROOT))
+                    && !UploadService.isPendingOrInProgressMediaUpload(mediaModel)) {
+                    mDispatcher.dispatch(MediaActionBuilder.newRemoveMediaAction(mediaModel));
+                }
+            }
         }
     }
 
@@ -3184,8 +3603,6 @@ public class EditPostActivity extends AppCompatActivity implements
                         refreshBlogMedia();
                     }
                 });
-            } else {
-                AppLockManager.getInstance().setExtendedTimeout();
             }
         }
 
@@ -3243,7 +3660,7 @@ public class EditPostActivity extends AppCompatActivity implements
     }
 
     private void onEditorFinalTouchesBeforeShowing() {
-        fillContentEditorFields();
+        refreshEditorContent();
         // Set the error listener
         if (mEditorFragment instanceof EditorFragment) {
             mEditorFragment.setDebugModeEnabled(BuildConfig.DEBUG);
@@ -3262,6 +3679,25 @@ public class EditPostActivity extends AppCompatActivity implements
                 }
             });
         }
+
+        // probably here is best for Gutenberg to start interacting with
+        if (mShowGutenbergEditor && mEditorFragment instanceof GutenbergEditorFragment) {
+            List<MediaModel> failedMedia = mMediaStore.getMediaForPostWithState(mPost, MediaUploadState.FAILED);
+            if (failedMedia != null && !failedMedia.isEmpty()) {
+                HashSet<Integer> mediaIds = new HashSet<>();
+                for (MediaModel media : failedMedia) {
+                    mediaIds.add(media.getId());
+                }
+                ((GutenbergEditorFragment) mEditorFragment).resetUploadingMediaToFailed(mediaIds);
+            }
+        } else if (mShowAztecEditor && mEditorFragment instanceof AztecEditorFragment) {
+            mPostEditorAnalyticsSession.start(false);
+        }
+    }
+
+    @Override
+    public void onEditorFragmentContentReady(boolean hasUnsupportedContent) {
+        mPostEditorAnalyticsSession.start(hasUnsupportedContent);
     }
 
     @Override
@@ -3399,7 +3835,7 @@ public class EditPostActivity extends AppCompatActivity implements
     @SuppressWarnings("unused")
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onPostChanged(OnPostChanged event) {
-        if (event.causeOfChange == PostAction.UPDATE_POST) {
+        if (event.causeOfChange instanceof CauseOfOnPostChanged.UpdatePost) {
             if (!event.isError()) {
                 // here update the menu if it's not a draft anymore
                 invalidateOptionsMenu();
@@ -3415,9 +3851,9 @@ public class EditPostActivity extends AppCompatActivity implements
                                 .setAction(getString(R.string.undo), new OnClickListener() {
                                     @Override public void onClick(View view) {
                                         AnalyticsTracker.track(Stat.EDITOR_DISCARDED_CHANGES_UNDO);
-                                        RemotePostPayload payload = new RemotePostPayload(mPostWithLocalChanges, mSite);
+                                        RemotePostPayload payload = new RemotePostPayload(mPostForUndo, mSite);
                                         mDispatcher.dispatch(PostActionBuilder.newFetchPostAction(payload));
-                                        mPost = mPostWithLocalChanges.clone();
+                                        mPost = mPostForUndo.clone();
                                         refreshEditorContent();
                                     }
                                 })
@@ -3435,7 +3871,9 @@ public class EditPostActivity extends AppCompatActivity implements
                 }
             } else {
                 if (mIsDiscardingChanges) {
-                    showDialogError();
+                    showDialogError(R.string.local_changes_discarding_error, R.string.contact_support,
+                            TAG_DISCARDING_CHANGES_ERROR_DIALOG,
+                            true);
                 }
 
                 mIsDiscardingChanges = false;
@@ -3486,12 +3924,18 @@ public class EditPostActivity extends AppCompatActivity implements
         }
     }
 
-    private void showAsyncPromoDialog() {
+    private void showAsyncPromoDialog(boolean isPage, boolean isScheduled) {
+        int title = isScheduled ? R.string.async_promo_title_schedule : R.string.async_promo_title_publish;
+        int description = isScheduled
+            ? (isPage ? R.string.async_promo_description_schedule_page : R.string.async_promo_description_schedule_post)
+            : (isPage ? R.string.async_promo_description_publish_page : R.string.async_promo_description_publish_post);
+        int button = isScheduled ? R.string.async_promo_schedule_now : R.string.async_promo_publish_now;
+
         final PromoDialog asyncPromoDialog = new PromoDialog();
         asyncPromoDialog.initialize(ASYNC_PROMO_DIALOG_TAG,
-                getString(R.string.async_promo_title),
-                getString(R.string.async_promo_description),
-                getString(R.string.async_promo_publish_now),
+                getString(title),
+                getString(description),
+                getString(button),
                 R.drawable.img_publish_button_124dp,
                 getString(R.string.keep_editing),
                 getString(R.string.async_promo_link));
@@ -3511,5 +3955,11 @@ public class EditPostActivity extends AppCompatActivity implements
     @Override
     public SiteModel getSite() {
         return mSite;
+    }
+
+
+    // External Access to the Image Loader
+    public AztecImageLoader getAztecImageLoader() {
+        return mAztecImageLoader;
     }
 }

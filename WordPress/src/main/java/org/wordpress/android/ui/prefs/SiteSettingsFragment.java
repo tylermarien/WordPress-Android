@@ -65,7 +65,7 @@ import org.wordpress.android.support.ZendeskHelper;
 import org.wordpress.android.ui.WPWebViewActivity;
 import org.wordpress.android.ui.accounts.HelpActivity.Origin;
 import org.wordpress.android.ui.prefs.SiteSettingsFormatDialog.FormatType;
-import org.wordpress.android.util.AnalyticsUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.HtmlUtils;
 import org.wordpress.android.util.LocaleManager;
@@ -1507,7 +1507,7 @@ public class SiteSettingsFragment extends PreferenceFragment
                             }
                         }
                 )
-                                   );
+        );
         view.findViewById(R.id.fab_button).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1537,7 +1537,7 @@ public class SiteSettingsFragment extends PreferenceFragment
                                             list.smoothScrollToPosition(getAdapter().getItemCount() - 1);
                                         }
                                     }
-                                     );
+                            );
                             mSiteSettings.saveSettings();
                             AnalyticsUtils.trackWithSiteDetails(AnalyticsTracker.Stat.SITE_SETTINGS_ADDED_LIST_ITEM,
                                                                 mSite);
@@ -1662,7 +1662,6 @@ public class SiteSettingsFragment extends PreferenceFragment
 
     private void hideAdminRequiredPreferences() {
         WPPrefUtils.removePreference(this, R.string.pref_key_site_screen, R.string.pref_key_site_general);
-        WPPrefUtils.removePreference(this, R.string.pref_key_site_screen, R.string.pref_key_site_account);
         WPPrefUtils.removePreference(this, R.string.pref_key_site_screen, R.string.pref_key_site_discussion);
         WPPrefUtils.removePreference(this, R.string.pref_key_site_writing, R.string.pref_key_site_category);
         WPPrefUtils.removePreference(this, R.string.pref_key_site_writing, R.string.pref_key_site_format);

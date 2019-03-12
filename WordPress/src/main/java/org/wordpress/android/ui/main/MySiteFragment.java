@@ -1,18 +1,23 @@
 package org.wordpress.android.ui.main;
 
 import android.app.Activity;
-import android.app.Fragment;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Paint;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.v4.app.Fragment;
 import android.support.v4.content.ContextCompat;
-import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.PopupMenu;
+import android.support.v7.widget.PopupMenu.OnMenuItemClickListener;
 import android.support.v7.widget.Toolbar;
+import android.text.Spannable;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
@@ -20,10 +25,12 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.TextView;
 
 import com.yalantis.ucrop.UCrop;
 import com.yalantis.ucrop.UCropActivity;
 
+import org.jetbrains.annotations.NotNull;
 import org.wordpress.android.R;
 import org.wordpress.android.WordPress;
 import org.wordpress.android.analytics.AnalyticsTracker;
@@ -34,9 +41,15 @@ import org.wordpress.android.fluxc.model.MediaModel;
 import org.wordpress.android.fluxc.model.SiteModel;
 import org.wordpress.android.fluxc.store.AccountStore;
 import org.wordpress.android.fluxc.store.MediaStore;
-import org.wordpress.android.fluxc.store.PostStore;
+import org.wordpress.android.fluxc.store.QuickStartStore;
+import org.wordpress.android.fluxc.store.QuickStartStore.QuickStartTask;
+import org.wordpress.android.fluxc.store.QuickStartStore.QuickStartTaskType;
 import org.wordpress.android.login.LoginMode;
+import org.wordpress.android.ui.ActionableEmptyView;
 import org.wordpress.android.ui.ActivityLauncher;
+import org.wordpress.android.ui.FullScreenDialogFragment;
+import org.wordpress.android.ui.FullScreenDialogFragment.OnConfirmListener;
+import org.wordpress.android.ui.FullScreenDialogFragment.OnDismissListener;
 import org.wordpress.android.ui.RequestCodes;
 import org.wordpress.android.ui.accounts.LoginActivity;
 import org.wordpress.android.ui.comments.CommentsListFragment.CommentStatusCriteria;
@@ -45,13 +58,20 @@ import org.wordpress.android.ui.photopicker.PhotoPickerActivity;
 import org.wordpress.android.ui.photopicker.PhotoPickerActivity.PhotoPickerMediaSource;
 import org.wordpress.android.ui.plugins.PluginUtils;
 import org.wordpress.android.ui.posts.BasicFragmentDialog;
+import org.wordpress.android.ui.posts.PromoDialog;
+import org.wordpress.android.ui.posts.PromoDialog.PromoDialogClickInterface;
 import org.wordpress.android.ui.prefs.AppPrefs;
 import org.wordpress.android.ui.prefs.SiteSettingsInterface;
 import org.wordpress.android.ui.prefs.SiteSettingsInterface.SiteSettingsListener;
+import org.wordpress.android.ui.quickstart.QuickStartEvent;
+import org.wordpress.android.ui.quickstart.QuickStartFullScreenDialogFragment;
+import org.wordpress.android.ui.quickstart.QuickStartMySitePrompts;
+import org.wordpress.android.ui.quickstart.QuickStartNoticeDetails;
 import org.wordpress.android.ui.stats.service.StatsService;
 import org.wordpress.android.ui.themes.ThemeBrowserActivity;
 import org.wordpress.android.ui.uploads.UploadService;
 import org.wordpress.android.ui.uploads.UploadUtils;
+import org.wordpress.android.util.AccessibilityUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
 import org.wordpress.android.util.DateTimeUtils;
@@ -59,6 +79,7 @@ import org.wordpress.android.util.DisplayUtils;
 import org.wordpress.android.util.FluxCUtils;
 import org.wordpress.android.util.MediaUtils;
 import org.wordpress.android.util.PhotonUtils;
+import org.wordpress.android.util.QuickStartUtils;
 import org.wordpress.android.util.ServiceUtils;
 import org.wordpress.android.util.SiteUtils;
 import org.wordpress.android.util.ToastUtils;
@@ -66,6 +87,7 @@ import org.wordpress.android.util.ToastUtils.Duration;
 import org.wordpress.android.util.WPMediaUtils;
 import org.wordpress.android.util.image.ImageManager;
 import org.wordpress.android.util.image.ImageType;
+import org.wordpress.android.widgets.WPDialogSnackbar;
 import org.wordpress.android.widgets.WPTextView;
 
 import java.io.File;
@@ -77,19 +99,29 @@ import javax.inject.Inject;
 
 import de.greenrobot.event.EventBus;
 
-public class MySiteFragment extends Fragment implements SiteSettingsListener,
+import static org.wordpress.android.fluxc.store.QuickStartStore.QuickStartTaskType.CUSTOMIZE;
+import static org.wordpress.android.fluxc.store.QuickStartStore.QuickStartTaskType.GROW;
+import static org.wordpress.android.ui.quickstart.QuickStartFullScreenDialogFragment.RESULT_TASK;
+
+public class MySiteFragment extends Fragment implements
+        SiteSettingsListener,
         WPMainActivity.OnScrollToTopListener,
         BasicFragmentDialog.BasicDialogPositiveClickInterface,
-        BasicFragmentDialog.BasicDialogNegativeClickInterface, MainToolbarFragment {
-    private static final long ALERT_ANIM_OFFSET_MS = 1000L;
-    private static final long ALERT_ANIM_DURATION_MS = 1000L;
+        BasicFragmentDialog.BasicDialogNegativeClickInterface,
+        BasicFragmentDialog.BasicDialogOnDismissByOutsideTouchInterface, PromoDialogClickInterface, MainToolbarFragment,
+        OnConfirmListener, OnDismissListener {
     public static final int HIDE_WP_ADMIN_YEAR = 2015;
     public static final int HIDE_WP_ADMIN_MONTH = 9;
     public static final int HIDE_WP_ADMIN_DAY = 7;
     public static final String HIDE_WP_ADMIN_GMT_TIME_ZONE = "GMT";
+    public static final String ARG_QUICK_START_TASK = "ARG_QUICK_START_TASK";
     public static final String TAG_ADD_SITE_ICON_DIALOG = "TAG_ADD_SITE_ICON_DIALOG";
+    public static final String TAG_REMOVE_NEXT_STEPS_DIALOG = "TAG_REMOVE_NEXT_STEPS_DIALOG";
     public static final String TAG_CHANGE_SITE_ICON_DIALOG = "TAG_CHANGE_SITE_ICON_DIALOG";
     public static final String TAG_EDIT_SITE_ICON_PERMISSIONS_DIALOG = "TAG_EDIT_SITE_ICON_PERMISSIONS_DIALOG";
+    public static final String TAG_QUICK_START_DIALOG = "TAG_QUICK_START_DIALOG";
+    public static final String TAG_QUICK_START_MIGRATION_DIALOG = "TAG_QUICK_START_MIGRATION_DIALOG";
+    public static final int AUTO_QUICK_START_SNACKBAR_DELAY_MS = 1000;
 
     private ImageView mBlavatarImageView;
     private ProgressBar mBlavatarProgressBar;
@@ -102,15 +134,26 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
     private LinearLayout mPlanContainer;
     private LinearLayout mPluginsContainer;
     private LinearLayout mActivityLogContainer;
+    private View mQuickStartContainer;
     private WPTextView mConfigurationHeader;
     private View mSettingsView;
     private LinearLayout mAdminView;
-    private LinearLayout mNoSiteView;
+    private ActionableEmptyView mActionableEmptyView;
     private ScrollView mScrollView;
-    private ImageView mNoSiteDrakeImageView;
     private WPTextView mCurrentPlanNameTextView;
     private View mSharingView;
     private SiteSettingsInterface mSiteSettings;
+    private QuickStartMySitePrompts mActiveTutorialPrompt;
+    private ImageView mQuickStartCustomizeIcon;
+    private TextView mQuickStartCustomizeSubtitle;
+    private TextView mQuickStartCustomizeTitle;
+    private View mQuickStartCustomizeView;
+    private ImageView mQuickStartGrowIcon;
+    private TextView mQuickStartGrowSubtitle;
+    private TextView mQuickStartGrowTitle;
+    private View mQuickStartGrowView;
+    private View mQuickStartMenuButton;
+    private Handler mQuickStartSnackBarHandler = new Handler();
 
     @Nullable
     private Toolbar mToolbar = null;
@@ -119,9 +162,9 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
     private int mBlavatarSz;
 
     @Inject AccountStore mAccountStore;
-    @Inject PostStore mPostStore;
     @Inject Dispatcher mDispatcher;
     @Inject MediaStore mMediaStore;
+    @Inject QuickStartStore mQuickStartStore;
     @Inject ImageManager mImageManager;
 
     public static MySiteFragment newInstance() {
@@ -139,7 +182,12 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        ((WordPress) getActivity().getApplication()).component().inject(this);
+        ((WordPress) requireActivity().getApplication()).component().inject(this);
+
+        if (savedInstanceState != null) {
+            mActiveTutorialPrompt =
+                    (QuickStartMySitePrompts) savedInstanceState.getSerializable(QuickStartMySitePrompts.KEY);
+        }
     }
 
     @Override
@@ -153,8 +201,8 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         // Site details may have changed (e.g. via Settings and returning to this Fragment) so update the UI
         refreshSelectedSiteDetails(getSelectedSite());
 
-        if (ServiceUtils.isServiceRunning(getActivity(), StatsService.class)) {
-            getActivity().stopService(new Intent(getActivity(), StatsService.class));
+        if (ServiceUtils.isServiceRunning(requireActivity(), StatsService.class)) {
+            requireActivity().stopService(new Intent(getActivity(), StatsService.class));
         }
 
         SiteModel site = getSelectedSite();
@@ -167,6 +215,83 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
                 mActivityLogContainer.setVisibility(View.VISIBLE);
             }
         }
+
+        updateQuickStartContainer();
+
+        if (!AppPrefs.hasQuickStartMigrationDialogShown() && QuickStartUtils.isQuickStartInProgress(mQuickStartStore)) {
+            showQuickStartDialogMigration();
+        }
+
+        showQuickStartNoticeIfNecessary();
+    }
+
+    private void showQuickStartNoticeIfNecessary() {
+        if (!QuickStartUtils.isQuickStartInProgress(mQuickStartStore) || !AppPrefs.isQuickStartNoticeRequired()) {
+            return;
+        }
+
+        final QuickStartTask taskToPrompt = QuickStartUtils.getNextUncompletedQuickStartTask(mQuickStartStore,
+                AppPrefs.getSelectedSite(), CUSTOMIZE); // CUSTOMIZE is default type
+
+        if (taskToPrompt != null) {
+            mQuickStartSnackBarHandler.removeCallbacksAndMessages(null);
+            mQuickStartSnackBarHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (!isAdded() || getView() == null || !(getActivity() instanceof WPMainActivity)) {
+                        return;
+                    }
+
+                    QuickStartNoticeDetails noticeDetails = QuickStartNoticeDetails.getNoticeForTask(taskToPrompt);
+                    if (noticeDetails == null) {
+                        return;
+                    }
+
+                    String noticeTitle = getString(noticeDetails.getTitleResId());
+                    String noticeMessage = getString(noticeDetails.getMessageResId());
+
+                    WPDialogSnackbar quickStartNoticeSnackBar =
+                            WPDialogSnackbar.make(
+                                    requireActivity().findViewById(R.id.coordinator),
+                                    noticeMessage,
+                                    AccessibilityUtils.getSnackbarDuration(getActivity(),
+                                            getResources().getInteger(R.integer.quick_start_snackbar_duration_ms)));
+
+                    quickStartNoticeSnackBar.setTitle(noticeTitle);
+
+                    quickStartNoticeSnackBar.setPositiveButton(
+                            getString(R.string.quick_start_button_positive), new OnClickListener() {
+                                @Override
+                                public void onClick(View v) {
+                                    AnalyticsTracker.track(Stat.QUICK_START_TASK_DIALOG_POSITIVE_TAPPED);
+                                    mActiveTutorialPrompt =
+                                            QuickStartMySitePrompts.getPromptDetailsForTask(taskToPrompt);
+                                    showActiveQuickStartTutorial();
+                                }
+                            });
+
+                    quickStartNoticeSnackBar
+                            .setNegativeButton(getString(R.string.quick_start_button_negative),
+                                    new OnClickListener() {
+                                        @Override
+                                        public void onClick(View v) {
+                                            AnalyticsTracker.track(Stat.QUICK_START_TASK_DIALOG_NEGATIVE_TAPPED);
+                                        }
+                                    });
+
+                    ((WPMainActivity) requireActivity()).showQuickStartSnackBar(quickStartNoticeSnackBar);
+
+                    AnalyticsTracker.track(Stat.QUICK_START_TASK_DIALOG_VIEWED);
+                    AppPrefs.setQuickStartNoticeRequired(false);
+                }
+            }, AUTO_QUICK_START_SNACKBAR_DELAY_MS);
+        }
+    }
+
+    @Override
+    public void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putSerializable(QuickStartMySitePrompts.KEY, mActiveTutorialPrompt);
     }
 
     private void initSiteSettings() {
@@ -177,7 +302,13 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
     }
 
     @Override
-    public View onCreateView(LayoutInflater inflater, ViewGroup container,
+    public void onPause() {
+        super.onPause();
+        clearActiveQuickStart();
+    }
+
+    @Override
+    public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container,
                              Bundle savedInstanceState) {
         final ViewGroup rootView = (ViewGroup) inflater.inflate(R.layout.my_site_fragment, container, false);
 
@@ -198,14 +329,33 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         mSharingView = rootView.findViewById(R.id.row_sharing);
         mAdminView = rootView.findViewById(R.id.row_admin);
         mScrollView = rootView.findViewById(R.id.scroll_view);
-        mNoSiteView = rootView.findViewById(R.id.no_site_view);
-        mNoSiteDrakeImageView = rootView.findViewById(R.id.my_site_no_site_view_drake);
+        mActionableEmptyView = rootView.findViewById(R.id.actionable_empty_view);
         mCurrentPlanNameTextView = rootView.findViewById(R.id.my_site_current_plan_text_view);
         mPageView = rootView.findViewById(R.id.row_pages);
+        mQuickStartContainer = rootView.findViewById(R.id.quick_start);
+        mQuickStartCustomizeView = rootView.findViewById(R.id.quick_start_customize);
+        mQuickStartCustomizeIcon = rootView.findViewById(R.id.quick_start_customize_icon);
+        mQuickStartCustomizeSubtitle = rootView.findViewById(R.id.quick_start_customize_subtitle);
+        mQuickStartCustomizeTitle = rootView.findViewById(R.id.quick_start_customize_title);
+        mQuickStartGrowView = rootView.findViewById(R.id.quick_start_grow);
+        mQuickStartGrowIcon = rootView.findViewById(R.id.quick_start_grow_icon);
+        mQuickStartGrowSubtitle = rootView.findViewById(R.id.quick_start_grow_subtitle);
+        mQuickStartGrowTitle = rootView.findViewById(R.id.quick_start_grow_title);
+        mQuickStartMenuButton = rootView.findViewById(R.id.quick_start_more);
 
+        setupClickListeners(rootView);
+
+        mToolbar = rootView.findViewById(R.id.toolbar_main);
+        mToolbar.setTitle(mToolbarTitle);
+
+        return rootView;
+    }
+
+    private void setupClickListeners(View rootView) {
         rootView.findViewById(R.id.card_view).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                completeQuickStarTask(QuickStartTask.VIEW_SITE);
                 ActivityLauncher.viewCurrentSite(getActivity(), getSelectedSite(), true);
             }
         });
@@ -220,6 +370,7 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         rootView.findViewById(R.id.row_view_site).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                completeQuickStarTask(QuickStartTask.VIEW_SITE);
                 ActivityLauncher.viewCurrentSite(getActivity(), getSelectedSite(), false);
             }
         });
@@ -229,6 +380,7 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
             public void onClick(View v) {
                 SiteModel selectedSite = getSelectedSite();
                 if (selectedSite != null) {
+                    completeQuickStarTask(QuickStartTask.CHECK_STATS);
                     if (!mAccountStore.hasAccessToken() && selectedSite.isJetpackConnected()) {
                         // If the user is not connected to WordPress.com, ask him to connect first.
                         startWPComLoginForJetpackStats();
@@ -255,6 +407,7 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
                         } else {
                             showAddSiteIconDialog();
                         }
+                        completeQuickStarTask(QuickStartTask.UPLOAD_SITE_ICON);
                     } else {
                         showEditingSiteIconRequiresPermissionDialog(
                                 hasIcon ? getString(R.string.my_site_icon_dialog_change_requires_permission_message)
@@ -267,6 +420,7 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         mPlanContainer.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                completeQuickStarTask(QuickStartTask.EXPLORE_PLANS);
                 ActivityLauncher.viewBlogPlans(getActivity(), getSelectedSite());
             }
         });
@@ -294,7 +448,8 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         rootView.findViewById(R.id.row_pages).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                ActivityLauncher.viewCurrentBlogPages(getActivity(), getSelectedSite());
+                requestNextStepOfActiveQuickStartTask();
+                ActivityLauncher.viewCurrentBlogPages(requireActivity(), getSelectedSite());
             }
         });
 
@@ -308,6 +463,10 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         mThemesContainer.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                completeQuickStarTask(QuickStartTask.CHOOSE_THEME);
+                if (isQuickStartTaskActive(QuickStartTask.CUSTOMIZE_SITE)) {
+                    requestNextStepOfActiveQuickStartTask();
+                }
                 ActivityLauncher.viewCurrentBlogThemes(getActivity(), getSelectedSite());
             }
         });
@@ -326,7 +485,6 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
             }
         });
 
-
         mActivityLogContainer.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -344,6 +502,9 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         mSharingView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (isQuickStartTaskActive(QuickStartTask.ENABLE_POST_SHARING)) {
+                    requestNextStepOfActiveQuickStartTask();
+                }
                 ActivityLauncher.viewBlogSharing(getActivity(), getSelectedSite());
             }
         });
@@ -355,18 +516,132 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
             }
         });
 
-        rootView.findViewById(R.id.my_site_add_site_btn).setOnClickListener(new View.OnClickListener() {
+        mActionableEmptyView.button.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 SitePickerActivity.addSite(getActivity(), mAccountStore.hasAccessToken(),
-                                           mAccountStore.getAccount().getUserName());
+                        mAccountStore.getAccount().getUserName());
             }
         });
 
-        mToolbar = rootView.findViewById(R.id.toolbar_main);
-        mToolbar.setTitle(mToolbarTitle);
+        mQuickStartCustomizeView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showQuickStartList(CUSTOMIZE);
+            }
+        });
 
-        return rootView;
+        mQuickStartGrowView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showQuickStartList(GROW);
+            }
+        });
+
+        mQuickStartMenuButton.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showQuickStartCardMenu();
+            }
+        });
+    }
+
+    @Override
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+
+        if (mActiveTutorialPrompt != null) {
+            showQuickStartFocusPoint();
+        }
+    }
+
+    private void updateQuickStartContainer() {
+        if (QuickStartUtils.isQuickStartInProgress(mQuickStartStore)) {
+            int site = AppPrefs.getSelectedSite();
+
+            int countCustomizeCompleted = mQuickStartStore.getCompletedTasksByType(site, CUSTOMIZE).size();
+            int countCustomizeUncompleted = mQuickStartStore.getUncompletedTasksByType(site, CUSTOMIZE).size();
+            int countGrowCompleted = mQuickStartStore.getCompletedTasksByType(site, GROW).size();
+            int countGrowUncompleted = mQuickStartStore.getUncompletedTasksByType(site, GROW).size();
+
+            if (countCustomizeUncompleted > 0) {
+                mQuickStartCustomizeIcon.setEnabled(true);
+                mQuickStartCustomizeTitle.setEnabled(true);
+                mQuickStartCustomizeTitle.setPaintFlags(
+                        mQuickStartCustomizeTitle.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG);
+            } else {
+                mQuickStartCustomizeIcon.setEnabled(false);
+                mQuickStartCustomizeTitle.setEnabled(false);
+                mQuickStartCustomizeTitle.setPaintFlags(
+                        mQuickStartCustomizeTitle.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
+            }
+
+            mQuickStartCustomizeSubtitle.setText(getString(R.string.quick_start_sites_type_subtitle,
+                    countCustomizeCompleted, countCustomizeCompleted + countCustomizeUncompleted));
+
+            if (countGrowUncompleted > 0) {
+                mQuickStartGrowIcon.setBackgroundResource(R.drawable.bg_oval_pink_500_multiple_users_white_40dp);
+                mQuickStartGrowTitle.setEnabled(true);
+                mQuickStartGrowTitle.setPaintFlags(
+                        mQuickStartGrowTitle.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG);
+            } else {
+                mQuickStartGrowIcon.setBackgroundResource(R.drawable.bg_oval_grey_multiple_users_white_40dp);
+                mQuickStartGrowTitle.setEnabled(false);
+                mQuickStartGrowTitle.setPaintFlags(
+                        mQuickStartGrowTitle.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
+            }
+
+            mQuickStartGrowSubtitle.setText(getString(R.string.quick_start_sites_type_subtitle,
+                    countGrowCompleted, countGrowCompleted + countGrowUncompleted));
+
+            mQuickStartContainer.setVisibility(View.VISIBLE);
+        } else {
+            mQuickStartContainer.setVisibility(View.GONE);
+        }
+    }
+
+    private void showQuickStartCardMenu() {
+        PopupMenu quickStartPopupMenu = new PopupMenu(requireContext(), mQuickStartMenuButton);
+        quickStartPopupMenu.setOnMenuItemClickListener(new OnMenuItemClickListener() {
+            @Override
+            public boolean onMenuItemClick(MenuItem item) {
+                if (item.getItemId() == R.id.quick_start_card_menu_remove) {
+                    showRemoveNextStepsDialog();
+                    return true;
+                }
+                return false;
+            }
+        });
+        quickStartPopupMenu.inflate(R.menu.quick_start_card_menu);
+        quickStartPopupMenu.show();
+    }
+
+    private void showQuickStartList(QuickStartTaskType type) {
+        clearActiveQuickStart();
+        final Bundle bundle = QuickStartFullScreenDialogFragment.newBundle(type);
+
+        switch (type) {
+            case CUSTOMIZE:
+                new FullScreenDialogFragment.Builder(requireContext())
+                        .setTitle(R.string.quick_start_sites_type_customize)
+                        .setOnConfirmListener(this)
+                        .setOnDismissListener(this)
+                        .setContent(QuickStartFullScreenDialogFragment.class, bundle)
+                        .build()
+                        .show(requireActivity().getSupportFragmentManager(), FullScreenDialogFragment.TAG);
+                break;
+            case GROW:
+                new FullScreenDialogFragment.Builder(requireContext())
+                        .setTitle(R.string.quick_start_sites_type_grow)
+                        .setOnConfirmListener(this)
+                        .setOnDismissListener(this)
+                        .setContent(QuickStartFullScreenDialogFragment.class, bundle)
+                        .build()
+                        .show(requireActivity().getSupportFragmentManager(), FullScreenDialogFragment.TAG);
+                break;
+            case UNKNOWN:
+                break;
+        }
     }
 
     private void showAddSiteIconDialog() {
@@ -377,7 +652,7 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
                 getString(R.string.yes),
                 getString(R.string.no),
                 null);
-        dialog.show(((AppCompatActivity) getActivity()).getSupportFragmentManager(), tag);
+        dialog.show((requireActivity()).getSupportFragmentManager(), tag);
     }
 
     private void showChangeSiteIconDialog() {
@@ -388,7 +663,7 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
                 getString(R.string.my_site_icon_dialog_change_button),
                 getString(R.string.my_site_icon_dialog_remove_button),
                 getString(R.string.my_site_icon_dialog_cancel_button));
-        dialog.show(((AppCompatActivity) getActivity()).getSupportFragmentManager(), tag);
+        dialog.show((requireActivity()).getSupportFragmentManager(), tag);
     }
 
     private void showEditingSiteIconRequiresPermissionDialog(@NonNull String message) {
@@ -399,7 +674,18 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
                 getString(R.string.dialog_button_ok),
                 null,
                 null);
-        dialog.show(((AppCompatActivity) getActivity()).getSupportFragmentManager(), tag);
+        dialog.show((requireActivity()).getSupportFragmentManager(), tag);
+    }
+
+    private void showRemoveNextStepsDialog() {
+        BasicFragmentDialog dialog = new BasicFragmentDialog();
+        String tag = TAG_REMOVE_NEXT_STEPS_DIALOG;
+        dialog.initialize(tag, getString(R.string.quick_start_dialog_remove_next_steps_title),
+                getString(R.string.quick_start_dialog_remove_next_steps_message),
+                getString(R.string.remove),
+                getString(R.string.cancel),
+                null);
+        dialog.show((requireActivity()).getSupportFragmentManager(), tag);
     }
 
     private void startWPComLoginForJetpackStats() {
@@ -491,6 +777,29 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         }
     }
 
+    @Override
+    public void onConfirm(@Nullable Bundle result) {
+        if (result != null) {
+            QuickStartTask task = (QuickStartTask) result.getSerializable(RESULT_TASK);
+            if (task == null || task == QuickStartTask.CREATE_SITE) {
+                return;
+            }
+
+            // Remove existing quick start indicator, if necessary.
+            if (mActiveTutorialPrompt != null) {
+                removeQuickStartFocusPoint();
+            }
+
+            mActiveTutorialPrompt = QuickStartMySitePrompts.getPromptDetailsForTask(task);
+            showActiveQuickStartTutorial();
+        }
+    }
+
+    @Override
+    public void onDismiss() {
+        updateQuickStartContainer();
+    }
+
     private void startSiteIconUpload(final String filePath) {
         if (TextUtils.isEmpty(filePath)) {
             ToastUtils.showToast(getActivity(), R.string.error_locating_image, ToastUtils.Duration.SHORT);
@@ -506,6 +815,10 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         SiteModel site = getSelectedSite();
         if (site != null) {
             MediaModel media = buildMediaModel(file, site);
+            if (media == null) {
+                ToastUtils.showToast(getActivity(), R.string.file_not_found, ToastUtils.Duration.SHORT);
+                return;
+            }
             UploadService.uploadMedia(getActivity(), media);
         } else {
             ToastUtils.showToast(getActivity(), R.string.error_generic, ToastUtils.Duration.SHORT);
@@ -531,8 +844,8 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
 
     private MediaModel buildMediaModel(File file, SiteModel site) {
         Uri uri = new Uri.Builder().path(file.getPath()).build();
-        String mimeType = getActivity().getContentResolver().getType(uri);
-        return FluxCUtils.mediaModelFromLocalUri(getActivity(), uri, mimeType, mMediaStore, site.getId());
+        String mimeType = requireActivity().getContentResolver().getType(uri);
+        return FluxCUtils.mediaModelFromLocalUri(requireActivity(), uri, mimeType, mMediaStore, site.getId());
     }
 
     private void startCropActivity(Uri uri) {
@@ -562,22 +875,20 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
 
         if (site == null) {
             mScrollView.setVisibility(View.GONE);
-            mNoSiteView.setVisibility(View.VISIBLE);
+            mActionableEmptyView.setVisibility(View.VISIBLE);
 
-            // if the screen height is too short, we can just hide the drake illustration
-            Activity activity = getActivity();
-            boolean drakeVisibility = DisplayUtils.getDisplayPixelHeight(activity) >= 500;
-            if (drakeVisibility) {
-                mNoSiteDrakeImageView.setVisibility(View.VISIBLE);
+            // Hide actionable empty view image when screen height is under 600 pixels.
+            if (DisplayUtils.getDisplayPixelHeight(getActivity()) >= 600) {
+                mActionableEmptyView.image.setVisibility(View.VISIBLE);
             } else {
-                mNoSiteDrakeImageView.setVisibility(View.GONE);
+                mActionableEmptyView.image.setVisibility(View.GONE);
             }
 
             return;
         }
 
         mScrollView.setVisibility(View.VISIBLE);
-        mNoSiteView.setVisibility(View.GONE);
+        mActionableEmptyView.setVisibility(View.GONE);
 
         toggleAdminVisibility(site);
 
@@ -624,6 +935,9 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         // Do not show pages menu item to Collaborators.
         int pageVisibility = site.isSelfHostedAdmin() || site.getHasCapabilityEditPages() ? View.VISIBLE : View.GONE;
         mPageView.setVisibility(pageVisibility);
+
+        // Refresh the title
+        setTitle(site.getName());
     }
 
     private void toggleAdminVisibility(@Nullable final SiteModel site) {
@@ -646,7 +960,7 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         } else {
             Date dateCreated = DateTimeUtils.dateFromIso8601(mAccountStore.getAccount().getDate());
             GregorianCalendar calendar = new GregorianCalendar(HIDE_WP_ADMIN_YEAR, HIDE_WP_ADMIN_MONTH,
-                                                               HIDE_WP_ADMIN_DAY);
+                    HIDE_WP_ADMIN_DAY);
             calendar.setTimeZone(TimeZone.getTimeZone(HIDE_WP_ADMIN_GMT_TIME_ZONE));
             return dateCreated != null && dateCreated.after(calendar.getTime());
         }
@@ -672,10 +986,13 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
     }
 
     @Override
-    public void setTitle(final String title) {
-        mToolbarTitle = title;
-        if (mToolbar != null) {
-            mToolbar.setTitle(title);
+    public void setTitle(@NonNull final String title) {
+        if (isAdded()) {
+            mToolbarTitle = (title.isEmpty()) ? getString(R.string.wordpress) : title;
+
+            if (mToolbar != null) {
+                mToolbar.setTitle(mToolbarTitle);
+            }
         }
     }
 
@@ -683,7 +1000,6 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
      * We can't just use fluxc OnSiteChanged event, as the order of events is not guaranteed -> getSelectedSite()
      * method might return an out of date SiteModel, if the OnSiteChanged event handler in the WPMainActivity wasn't
      * called yet.
-     *
      */
     public void onSiteChanged(SiteModel site) {
         refreshSelectedSiteDetails(site);
@@ -703,12 +1019,12 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
         if (site != null && event.post != null) {
             if (event.post.getLocalSiteId() == site.getId()) {
                 UploadUtils.onPostUploadedSnackbarHandler(getActivity(),
-                        getActivity().findViewById(R.id.coordinator), true,
+                        requireActivity().findViewById(R.id.coordinator), true,
                         event.post, event.errorMessage, site, mDispatcher);
             }
         } else if (event.mediaModelList != null && !event.mediaModelList.isEmpty()) {
             UploadUtils.onMediaUploadedSnackbarHandler(getActivity(),
-                    getActivity().findViewById(R.id.coordinator), true,
+                    requireActivity().findViewById(R.id.coordinator), true,
                     event.mediaModelList, site, event.errorMessage);
         }
     }
@@ -734,7 +1050,7 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
             } else {
                 if (event.mediaModelList != null && !event.mediaModelList.isEmpty()) {
                     UploadUtils.onMediaUploadedSnackbarHandler(getActivity(),
-                            getActivity().findViewById(R.id.coordinator), false,
+                            requireActivity().findViewById(R.id.coordinator), false,
                             event.mediaModelList, site, event.successMessage);
                 }
             }
@@ -752,16 +1068,45 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
             case TAG_EDIT_SITE_ICON_PERMISSIONS_DIALOG:
                 // no-op
                 break;
+            case TAG_QUICK_START_DIALOG:
+                startQuickStart();
+                AnalyticsTracker.track(Stat.QUICK_START_REQUEST_DIALOG_POSITIVE_TAPPED);
+                break;
+            case TAG_QUICK_START_MIGRATION_DIALOG:
+                AnalyticsTracker.track(Stat.QUICK_START_MIGRATION_DIALOG_POSITIVE_TAPPED);
+                break;
+            case TAG_REMOVE_NEXT_STEPS_DIALOG:
+                AnalyticsTracker.track(Stat.QUICK_START_REMOVE_DIALOG_POSITIVE_TAPPED);
+                skipQuickStart();
+                updateQuickStartContainer();
+                clearActiveQuickStart();
+                break;
             default:
                 AppLog.e(T.EDITOR, "Dialog instanceTag is not recognized");
                 throw new UnsupportedOperationException("Dialog instanceTag is not recognized");
         }
     }
 
+    private void skipQuickStart() {
+        int siteId = AppPrefs.getSelectedSite();
+        for (QuickStartTask quickStartTask : QuickStartTask.values()) {
+            mQuickStartStore.setDoneTask(siteId, quickStartTask, true);
+        }
+        mQuickStartStore.setQuickStartCompleted(siteId, true);
+        // skipping all tasks means no achievement notification, so we mark it as received
+        mQuickStartStore.setQuickStartNotificationReceived(siteId, true);
+    }
+
+    private void startQuickStart() {
+        mQuickStartStore.setDoneTask(AppPrefs.getSelectedSite(), QuickStartTask.CREATE_SITE, true);
+        updateQuickStartContainer();
+    }
+
     @Override
     public void onNegativeClicked(@NonNull String instanceTag) {
         switch (instanceTag) {
             case TAG_ADD_SITE_ICON_DIALOG:
+                showQuickStartNoticeIfNecessary();
                 break;
             case TAG_CHANGE_SITE_ICON_DIALOG:
                 AnalyticsTracker.track(Stat.MY_SITE_ICON_REMOVED);
@@ -769,10 +1114,51 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
                 mSiteSettings.setSiteIconMediaId(0);
                 mSiteSettings.saveSettings();
                 break;
+            case TAG_QUICK_START_DIALOG:
+                AnalyticsTracker.track(Stat.QUICK_START_REQUEST_DIALOG_NEGATIVE_TAPPED);
+                break;
+            case TAG_REMOVE_NEXT_STEPS_DIALOG:
+                AnalyticsTracker.track(Stat.QUICK_START_REMOVE_DIALOG_NEGATIVE_TAPPED);
+                break;
             default:
-                AppLog.e(T.EDITOR, "Dialog instanceTag is not recognized");
+                AppLog.e(T.EDITOR, "Dialog instanceTag '" + instanceTag + "' is not recognized");
                 throw new UnsupportedOperationException("Dialog instanceTag is not recognized");
         }
+    }
+
+    @Override
+    public void onNeutralClicked(@NonNull String instanceTag) {
+        switch (instanceTag) {
+            case TAG_QUICK_START_DIALOG:
+                AppPrefs.setQuickStartDisabled(true);
+                AnalyticsTracker.track(Stat.QUICK_START_REQUEST_DIALOG_NEUTRAL_TAPPED);
+                break;
+            default:
+                AppLog.e(T.EDITOR, "Dialog instanceTag '" + instanceTag + "' is not recognized");
+                throw new UnsupportedOperationException("Dialog instanceTag is not recognized");
+        }
+    }
+
+    @Override
+    public void onDismissByOutsideTouch(@NotNull String instanceTag) {
+        switch (instanceTag) {
+            case TAG_ADD_SITE_ICON_DIALOG:
+                showQuickStartNoticeIfNecessary();
+                break;
+            case TAG_CHANGE_SITE_ICON_DIALOG:
+            case TAG_EDIT_SITE_ICON_PERMISSIONS_DIALOG:
+            case TAG_QUICK_START_DIALOG:
+            case TAG_QUICK_START_MIGRATION_DIALOG:
+            case TAG_REMOVE_NEXT_STEPS_DIALOG:
+                break; // do nothing
+            default:
+                AppLog.e(T.EDITOR, "Dialog instanceTag '" + instanceTag + "' is not recognized");
+                throw new UnsupportedOperationException("Dialog instanceTag is not recognized");
+        }
+    }
+
+    @Override
+    public void onLinkClicked(@NonNull String instanceTag) {
     }
 
     @Override
@@ -800,5 +1186,165 @@ public class MySiteFragment extends Fragment implements SiteSettingsListener,
 
     @Override
     public void onCredentialsValidated(Exception error) {
+    }
+
+    private Runnable mAddQuickStartFocusPointTask = new Runnable() {
+        @Override
+        public void run() {
+            // technically there is no situation (yet) where fragment is not added but we need to show focus point
+            if (!isAdded()) {
+                return;
+            }
+
+            ViewGroup parentView = requireActivity().findViewById(mActiveTutorialPrompt.getParentContainerId());
+            final View quickStartTarget = requireActivity().findViewById(mActiveTutorialPrompt.getFocusedContainerId());
+
+            if (quickStartTarget == null || parentView == null) {
+                return;
+            }
+
+            int focusPointSize = getResources().getDimensionPixelOffset(R.dimen.quick_start_focus_point_size);
+            int horizontalOffset;
+            int verticalOffset;
+
+            if (QuickStartMySitePrompts.isTargetingBottomNavBar(mActiveTutorialPrompt.getTask())) {
+                horizontalOffset = (quickStartTarget.getWidth() / 2) - focusPointSize + getResources()
+                        .getDimensionPixelOffset(R.dimen.quick_start_focus_point_bottom_nav_offset);
+                verticalOffset = 0;
+            } else if (mActiveTutorialPrompt.getTask() == QuickStartTask.UPLOAD_SITE_ICON) {
+                horizontalOffset =
+                        getResources().getDimensionPixelOffset(R.dimen.quick_start_focus_point_my_site_right_offset)
+                        / 2;
+                verticalOffset = -(quickStartTarget.getWidth() / 2);
+            } else {
+                horizontalOffset =
+                        getResources().getDimensionPixelOffset(R.dimen.quick_start_focus_point_my_site_right_offset);
+                verticalOffset = (((quickStartTarget.getHeight()) - focusPointSize) / 2);
+            }
+
+            QuickStartUtils.addQuickStartFocusPointAboveTheView(parentView, quickStartTarget, horizontalOffset,
+                    verticalOffset);
+
+            // highlight MySite row and scroll to it
+            if (!QuickStartMySitePrompts.isTargetingBottomNavBar(mActiveTutorialPrompt.getTask())) {
+                mScrollView.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mScrollView.smoothScrollTo(0, quickStartTarget.getTop());
+                        quickStartTarget.setPressed(mActiveTutorialPrompt.getTask() != QuickStartTask.UPLOAD_SITE_ICON);
+                    }
+                });
+            }
+        }
+    };
+
+    private void showQuickStartFocusPoint() {
+        if (getView() == null || !hasActiveQuickStartTask()) {
+            return;
+        }
+        getView().post(mAddQuickStartFocusPointTask);
+    }
+
+    private void removeQuickStartFocusPoint() {
+        if (getView() == null || !isAdded()) {
+            return;
+        }
+        getView().removeCallbacks(mAddQuickStartFocusPointTask);
+        QuickStartUtils.removeQuickStartFocusPoint((ViewGroup) requireActivity().findViewById(R.id.root_view_main));
+    }
+
+    public boolean isQuickStartTaskActive(QuickStartTask task) {
+        return hasActiveQuickStartTask() && mActiveTutorialPrompt.getTask() == task;
+    }
+
+    private void completeQuickStarTask(QuickStartTask quickStartTask) {
+        if (getSelectedSite() != null) {
+            // we need to process notices for tasks that are completed at MySite fragment
+            AppPrefs.setQuickStartNoticeRequired(
+                    !mQuickStartStore.hasDoneTask(AppPrefs.getSelectedSite(), quickStartTask)
+                    && mActiveTutorialPrompt != null
+                    && mActiveTutorialPrompt.getTask() == quickStartTask);
+
+            QuickStartUtils.completeTaskAndRemindNextOne(mQuickStartStore, quickStartTask, mDispatcher,
+                    getSelectedSite(), getContext());
+            // We update completed tasks counter onResume, but UPLOAD_SITE_ICON can be completed without navigating
+            // away from the activity, so we are updating counter here
+            if (quickStartTask == QuickStartTask.UPLOAD_SITE_ICON) {
+                updateQuickStartContainer();
+            }
+            if (mActiveTutorialPrompt != null && mActiveTutorialPrompt.getTask() == quickStartTask) {
+                removeQuickStartFocusPoint();
+                clearActiveQuickStartTask();
+            }
+        }
+    }
+
+    private void clearActiveQuickStart() {
+        // Clear pressed row.
+        if (mActiveTutorialPrompt != null
+            && !QuickStartMySitePrompts.isTargetingBottomNavBar(mActiveTutorialPrompt.getTask())) {
+            requireActivity().findViewById(mActiveTutorialPrompt.getFocusedContainerId()).setPressed(false);
+        }
+
+        if (getActivity() != null && !getActivity().isChangingConfigurations()) {
+            clearActiveQuickStartTask();
+            removeQuickStartFocusPoint();
+        }
+
+        mQuickStartSnackBarHandler.removeCallbacksAndMessages(null);
+    }
+
+    public void requestNextStepOfActiveQuickStartTask() {
+        if (!hasActiveQuickStartTask()) {
+            return;
+        }
+        removeQuickStartFocusPoint();
+        EventBus.getDefault().postSticky(new QuickStartEvent(mActiveTutorialPrompt.getTask()));
+        clearActiveQuickStartTask();
+    }
+
+    private void clearActiveQuickStartTask() {
+        mActiveTutorialPrompt = null;
+    }
+
+    private boolean hasActiveQuickStartTask() {
+        return mActiveTutorialPrompt != null;
+    }
+
+    private void showActiveQuickStartTutorial() {
+        if (!hasActiveQuickStartTask() || !isAdded() || !(getActivity() instanceof WPMainActivity)) {
+            return;
+        }
+
+        showQuickStartFocusPoint();
+
+        Spannable shortQuickStartMessage = QuickStartUtils.stylizeQuickStartPrompt(getActivity(),
+                mActiveTutorialPrompt.getShortMessagePrompt(),
+                mActiveTutorialPrompt.getIconId());
+
+        WPDialogSnackbar promptSnackbar = WPDialogSnackbar.make(requireActivity().findViewById(R.id.coordinator),
+                shortQuickStartMessage, AccessibilityUtils.getSnackbarDuration(requireContext(),
+                        getResources().getInteger(R.integer.quick_start_snackbar_duration_ms)));
+
+        ((WPMainActivity) getActivity()).showQuickStartSnackBar(promptSnackbar);
+    }
+
+    private void showQuickStartDialogMigration() {
+        PromoDialog promoDialog = new PromoDialog();
+        promoDialog.initialize(
+                TAG_QUICK_START_MIGRATION_DIALOG,
+                getString(R.string.quick_start_dialog_migration_title),
+                getString(R.string.quick_start_dialog_migration_message),
+                getString(android.R.string.ok),
+                R.drawable.img_illustration_checkmark_280dp,
+                "",
+                "",
+                "");
+
+        if (getFragmentManager() != null) {
+            promoDialog.show(getFragmentManager(), TAG_QUICK_START_MIGRATION_DIALOG);
+            AppPrefs.setQuickStartMigrationDialogShown(true);
+            AnalyticsTracker.track(Stat.QUICK_START_MIGRATION_DIALOG_VIEWED);
+        }
     }
 }

@@ -154,6 +154,10 @@ public class AztecEditorFragment extends EditorFragmentAbstract implements
 
     private static boolean mIsToolbarExpanded = false;
 
+    // 1-deep cache of html parsed to spans, as a speed optimization instead of parsing the same content again and again
+    private static int sPostContentHash;
+    private static Spanned sParsedContentCached;
+
     private boolean mEditorWasPaused = false;
     private boolean mHideActionBarOnSoftKeyboardUp = false;
 
@@ -274,7 +278,7 @@ public class AztecEditorFragment extends EditorFragmentAbstract implements
                         mFormattingToolbar.enableFormatButtons(!hasFocus);
                     }
                 }
-                                       );
+        );
 
         mContent.setOnDragListener(mOnDragListener);
         mSource.setOnDragListener(mOnDragListener);
@@ -552,7 +556,7 @@ public class AztecEditorFragment extends EditorFragmentAbstract implements
         // Initialize both editors (visual, source) with the same content. Need to do that so the starting point used in
         //  their content diffing algorithm is the same. That's assumed by the Toolbar's mode-switching logic too.
         mSource.displayStyledAndFormattedHtml(postContent);
-        mContent.fromHtml(postContent);
+        mContent.fromHtml(postContent, true);
 
         updateFailedAndUploadingMedia();
 
@@ -1794,8 +1798,17 @@ public class AztecEditorFragment extends EditorFragmentAbstract implements
                         attributes.removeAttribute(ATTR_ALT);
                     }
 
-                    attributes.setValue(ATTR_DIMEN_WIDTH, metaData.getWidth());
-                    attributes.setValue(ATTR_DIMEN_HEIGHT, metaData.getHeight());
+                    if (!TextUtils.isEmpty(metaData.getWidth())) {
+                        attributes.setValue(ATTR_DIMEN_WIDTH, metaData.getWidth());
+                    } else {
+                        attributes.removeAttribute(ATTR_DIMEN_WIDTH);
+                    }
+
+                    if (!TextUtils.isEmpty(metaData.getHeight())) {
+                        attributes.setValue(ATTR_DIMEN_HEIGHT, metaData.getHeight());
+                    } else {
+                        attributes.removeAttribute(ATTR_DIMEN_HEIGHT);
+                    }
 
                     if (!TextUtils.isEmpty(metaData.getLinkUrl())) {
                         AztecAttributes linkAttributes =
@@ -1847,7 +1860,7 @@ public class AztecEditorFragment extends EditorFragmentAbstract implements
                                                             captionAttributes);
 
                         // setting caption causes rendering issue in some cases, reset content to avoid them
-                        mContent.fromHtml(mContent.toHtml(false));
+                        mContent.fromHtml(mContent.toHtml(false), false);
                     } else {
                         // if no caption present apply align attribute directly to image
                         if (!TextUtils.isEmpty(metaData.getAlign())) {
@@ -1978,7 +1991,7 @@ public class AztecEditorFragment extends EditorFragmentAbstract implements
                                                                             AztecParser parser) {
         SpannableStringBuilder builder = new SpannableStringBuilder();
         String cleanSource = Format.removeSourceEditorFormatting(postContent, true);
-        builder.append(parser.fromHtml(cleanSource, context));
+        builder.append(parser.parseHtmlForInspection(cleanSource, context));
         Format.preProcessSpannedText(builder, true);
         return builder;
     }
@@ -2093,7 +2106,7 @@ public class AztecEditorFragment extends EditorFragmentAbstract implements
     private static boolean hasMediaItemsMarkedWithTag(Context context, @NonNull String postContent, String tag) {
         // fill in Aztec with the post's content
         AztecParser parser = getAztecParserWithPlugins();
-        Spanned content = parser.fromHtml(postContent, context);
+        Spanned content = parseContent(context, parser, postContent);
 
         // get all items with the class in the "tag" param
         AztecText.AttributePredicate uploadingPredicate = getPredicateWithClass(tag);
@@ -2132,7 +2145,7 @@ public class AztecEditorFragment extends EditorFragmentAbstract implements
         ArrayList<String> mediaMarkedUploading = new ArrayList<>();
         // fill in Aztec with the post's content
         AztecParser parser = getAztecParserWithPlugins();
-        Spanned content = parser.fromHtml(postContent, context);
+        Spanned content = parseContent(context, parser, postContent);
         AztecText.AttributePredicate uploadingPredicate = getPredicateWithClass(classToUse);
         for (Attributes attrs : getAllElementAttributes(content, uploadingPredicate)) {
             String itemId = attrs.getValue(ATTR_ID_WP);
@@ -2141,6 +2154,20 @@ public class AztecEditorFragment extends EditorFragmentAbstract implements
             }
         }
         return mediaMarkedUploading;
+    }
+
+    public static Spanned parseContent(Context context, AztecParser parser, @NonNull String postContent) {
+        // parsing is an expensive operation (especially if the content is big) so, return previous result if matching.
+        if (sParsedContentCached != null && postContent.hashCode() == sPostContentHash) {
+            return new SpannableString(sParsedContentCached);
+        }
+
+        // cache the post's content hash to compare next time
+        sPostContentHash = postContent.hashCode();
+
+        // fill in Aztec with the post's content
+        sParsedContentCached = parser.parseHtmlForInspection(postContent, context);
+        return sParsedContentCached;
     }
 
     public void setMediaToFailed(@NonNull String mediaId) {

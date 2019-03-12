@@ -6,12 +6,6 @@
 
     <uses-sdk tools:overrideLibrary="org.m4m.android" />
 
-    <supports-screens
-        android:anyDensity="true"
-        android:largeScreens="true"
-        android:normalScreens="true"
-        android:smallScreens="true" />
-
     <!-- Normal permissions, access automatically granted to app -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -23,8 +17,6 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <!-- GCM all build types configuration -->
@@ -81,6 +73,7 @@
                 <!-- Samsung multiwindow support -->
                 <category android:name="android.intent.category.MULTIWINDOW_LAUNCHER" />
             </intent-filter>
+
             <meta-data android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
         </activity>
@@ -89,7 +82,7 @@
         <activity
             android:name=".ui.main.WPMainActivity"
             android:theme="@style/Calypso.NoActionBar"
-            android:label=""/>
+            android:label="" />
 
         <!-- Account activities -->
         <activity
@@ -133,6 +126,11 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
+            android:name=".ui.sitecreation.NewSiteCreationActivity"
+            android:theme="@style/LoginTheme"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".ui.accounts.HelpActivity"
             android:label="@string/help_screen_title"
             android:theme="@style/CalypsoTheme.NoActionBarShadow" />
@@ -147,6 +145,7 @@
             android:name=".ui.prefs.BlogPreferencesActivity"
             android:configChanges="orientation|screenSize"
             android:label="@string/settings"
+            android:launchMode="singleTop"
             android:theme="@style/CalypsoTheme" />
         <activity
             android:name=".ui.prefs.ReleaseNotesActivity"
@@ -187,6 +186,7 @@
         <activity
             android:name=".ui.comments.CommentsActivity"
             android:theme="@style/Calypso.NoActionBar"
+            android:launchMode="singleTop"
             android:label="@string/comments"/>
         <activity
             android:name=".ui.comments.EditCommentActivity"
@@ -227,8 +227,18 @@
 
         <activity
             android:name=".ui.posts.PostsListActivity"
+            android:launchMode="singleTop"
             android:theme="@style/Calypso.NoActionBar"
             android:label="" />
+        <activity
+            android:name=".ui.pages.PagesActivity"
+            android:theme="@style/Calypso.NoActionBar"
+            android:launchMode="singleTop"
+            android:label="@string/my_site_btn_site_pages" />
+        <activity
+            android:name=".ui.pages.PageParentActivity"
+            android:theme="@style/Calypso.NoActionBar"
+            android:label="@string/set_parent" />
         <activity
             android:name=".ui.posts.PostPreviewActivity"
             android:label="@string/preview_post"
@@ -241,14 +251,22 @@
             android:label="@string/post_settings_tags"
             android:theme="@style/CalypsoTheme" />
 
+        <!-- History -->
+        <activity
+            android:name=".ui.history.HistoryDetailActivity"
+            android:label="@string/history_detail_title"
+            android:theme="@style/CalypsoTheme" />
+
         <!-- plans -->
         <activity android:name=".ui.plans.PlansActivity"
                   android:theme="@style/Calypso.NoActionBar"
-                  android:label="@string/plans"/>
+                  android:launchMode="singleTop"
+                  android:parentActivityName=".ui.main.WPMainActivity"/>
 
         <!-- Stats Activities -->
         <activity
-            android:name=".ui.stats.StatsActivity"
+            android:name=".ui.stats.OldStatsActivity"
+            android:launchMode="singleTop"
             android:theme="@style/Calypso.NoActionBar" />
         <activity
             android:name=".ui.stats.StatsViewAllActivity"
@@ -265,6 +283,10 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".ui.stats.refresh.StatsActivity"
+            android:launchMode="singleTop"
+            android:theme="@style/Calypso.NoActionBar" />
+        <activity
             android:name=".ui.WPWebViewActivity"
             android:theme="@style/Calypso.NoActionBar" />
         <activity
@@ -273,7 +295,7 @@
         <activity
             android:name=".ui.stats.StatsConnectJetpackActivity"
             android:theme="@style/Calypso.NoActionBar" />
-        <activity android:name=".ui.JetpackConnectionDeeplinkActivity" android:theme="@style/Calypso.NoActionBar">
+        <activity android:name=".ui.JetpackConnectionResultActivity" android:theme="@style/Calypso.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -283,6 +305,10 @@
                     android:scheme="wordpress" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".ui.JetpackRemoteInstallActivity"
+            android:label="@string/jetpack"
+            android:theme="@style/Calypso.NoActionBar"/>
 
         <!-- Media Activities -->
         <activity
@@ -304,6 +330,7 @@
         <activity
             android:name=".ui.themes.ThemeBrowserActivity"
             android:theme="@style/Calypso.NoActionBar"
+            android:launchMode="singleTop"
             android:label="@string/themes"/>
         <activity
             android:name=".ui.themes.ThemeWebActivity"
@@ -327,6 +354,18 @@
 
                 <data
                     android:host="viewpost"
+                    android:scheme="wordpress" />
+                <data
+                    android:host="stats"
+                    android:scheme="wordpress" />
+                <data
+                    android:host="read"
+                    android:scheme="wordpress" />
+                <data
+                    android:host="post"
+                    android:scheme="wordpress" />
+                <data
+                    android:host="notifications"
                     android:scheme="wordpress" />
             </intent-filter>
         </activity>
@@ -427,6 +466,7 @@
         <activity
             android:name=".ui.publicize.PublicizeListActivity"
             android:label="@string/sharing"
+            android:launchMode="singleTop"
             android:theme="@style/Calypso.NoActionBar"/>
 
         <activity
@@ -469,29 +509,20 @@
             android:name=".ui.stockmedia.StockMediaPickerActivity"
             android:label=""
             android:theme="@style/Calypso.NoActionBar" />
+        <activity
+            android:name=".ui.giphy.GiphyPickerActivity"
+            android:theme="@style/Calypso.NoActionBar" />
 
         <!-- Notifications activities -->
         <activity
             android:name=".ui.notifications.NotificationsDetailActivity"
             android:theme="@style/CalypsoTheme" />
 
-        <!-- Passcode lock activities -->
-        <activity
-            android:name="org.wordpress.passcodelock.PasscodeUnlockActivity"
-            android:theme="@style/CalypsoTheme"
-            android:launchMode="singleInstance"
-            android:label="@string/passcode_screen_title"
-            android:windowSoftInputMode="stateHidden" />
-        <activity
-            android:name="org.wordpress.passcodelock.PasscodeManagePasswordActivity"
-            android:theme="@style/CalypsoTheme"
-            android:label="@string/passcode_screen_title"
-            android:windowSoftInputMode="stateHidden" />
-
         <!--People Management-->
         <activity
             android:name=".ui.people.PeopleManagementActivity"
             android:label="@string/people"
+            android:launchMode="singleTop"
             android:theme="@style/Calypso.NoActionBar"/>
 
         <!--Plugins-->
@@ -501,9 +532,10 @@
         <activity
             android:name=".ui.plugins.PluginBrowserActivity"
             android:label="@string/plugins"
+            android:launchMode="singleTop"
             android:theme="@style/Calypso.NoActionBar"/>
 
-        <!--Plugins-->
+        <!--Activity log-->
         <activity
             android:name=".ui.activitylog.list.ActivityLogListActivity"
             android:label="@string/activity_log"
@@ -609,10 +641,6 @@
             android:exported="false"
             android:label="Suggestion Service" />
         <service
-            android:name=".ui.plans.PlanUpdateService"
-            android:exported="false"
-            android:label="Plans Update Service" />
-        <service
             android:name=".push.NotificationsProcessingService"
             android:exported="false"
             android:label="Notifications Quick Actions processing Service" />
@@ -628,11 +656,28 @@
             android:label="Notifications Update Job Service" />
 
         <service
+            android:name=".util.analytics.service.InstallationReferrerService"
+            android:exported="true"
+            android:permission="com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE"
+            android:label="Installation Referrer Service" />
+
+        <service
+            android:name=".util.analytics.service.InstallationReferrerJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false"
+            android:label="Installation Referrer Service" />
+
+        <service
             android:name=".login.LoginWpcomService"
             android:exported="false"
             android:label="Login to WPCOM Service" />
         <service
             android:name=".ui.accounts.signup.SiteCreationService"
+            android:exported="false"
+            android:label="Site Creation Service" />
+
+        <service
+            android:name=".ui.sitecreation.services.NewSiteCreationService"
             android:exported="false"
             android:label="Site Creation Service" />
 
@@ -664,6 +709,16 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/stats_widget_info" />
         </receiver>
+        <receiver
+            android:name=".util.analytics.receiver.InstallationReferrerReceiver"
+            android:permission="android.permission.INSTALL_PACKAGES"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.android.vending.INSTALL_REFERRER" />
+            </intent-filter>
+        </receiver>
+        <receiver android:name=".ui.quickstart.QuickStartReminderReceiver" />
+
 
         <!-- Google Cloud Messaging receiver and services -->
         <meta-data
@@ -676,14 +731,15 @@
             android:exported="false" />
 
         <service
-            android:name=".push.GCMMessageService">
+            android:name=".push.GCMMessageService"
+            tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
         <service
             android:name=".push.InstanceIDService"
-            >
+            tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="com.google.firebase.INSTANCE_ID_EVENT" />
             </intent-filter>

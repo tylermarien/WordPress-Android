@@ -19,6 +19,7 @@ import com.crashlytics.android.Crashlytics;
 
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import org.wordpress.android.BuildConfig;
 import org.wordpress.android.R;
 import org.wordpress.android.WordPress;
 import org.wordpress.android.analytics.AnalyticsTracker;
@@ -31,14 +32,13 @@ import org.wordpress.android.fluxc.store.AccountStore.OnAccountChanged;
 import org.wordpress.android.fluxc.store.SiteStore;
 import org.wordpress.android.ui.reader.services.update.ReaderUpdateLogic;
 import org.wordpress.android.ui.reader.services.update.ReaderUpdateServiceStarter;
-import org.wordpress.android.util.AnalyticsUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.CrashlyticsUtils;
 import org.wordpress.android.util.LocaleManager;
 import org.wordpress.android.util.NetworkUtils;
 import org.wordpress.android.util.ToastUtils;
 import org.wordpress.android.util.WPActivityUtils;
-import org.wordpress.android.util.WPMediaUtils;
 import org.wordpress.android.util.WPPrefUtils;
 
 import java.util.EnumSet;
@@ -65,9 +65,11 @@ public class AppSettingsFragment extends PreferenceFragment
     private DetailListPreference mImageMaxSizePref;
     private DetailListPreference mImageQualityPref;
     private WPSwitchPreference mOptimizedVideo;
+    private WPSwitchPreference mGutenbergDefaultForNewPosts;
     private DetailListPreference mVideoWidthPref;
     private DetailListPreference mVideoEncorderBitratePref;
     private PreferenceScreen mPrivacySettings;
+    private WPSwitchPreference mStripImageLocation;
 
     @Inject SiteStore mSiteStore;
     @Inject AccountStore mAccountStore;
@@ -132,6 +134,10 @@ public class AppSettingsFragment extends PreferenceFragment
         mOptimizedVideo =
                 (WPSwitchPreference) WPPrefUtils
                         .getPrefAndSetChangeListener(this, R.string.pref_key_optimize_video, this);
+
+        mGutenbergDefaultForNewPosts =
+                (WPSwitchPreference) WPPrefUtils
+                        .getPrefAndSetChangeListener(this, R.string.pref_key_gutenberg_default_for_new_posts, this);
         mVideoWidthPref =
                 (DetailListPreference) WPPrefUtils
                         .getPrefAndSetChangeListener(this, R.string.pref_key_site_video_width, this);
@@ -140,6 +146,10 @@ public class AppSettingsFragment extends PreferenceFragment
                         .getPrefAndSetChangeListener(this, R.string.pref_key_site_video_encoder_bitrate, this);
         mPrivacySettings = (PreferenceScreen) WPPrefUtils
                 .getPrefAndSetClickListener(this, R.string.pref_key_privacy_settings, this);
+
+        mStripImageLocation =
+                (WPSwitchPreference) WPPrefUtils
+                        .getPrefAndSetChangeListener(this, R.string.pref_key_strip_image_location, this);
 
         // Set Local settings
         mOptimizedImage.setChecked(AppPrefs.isImageOptimize());
@@ -157,14 +167,21 @@ public class AppSettingsFragment extends PreferenceFragment
         setDetailListPreferenceValue(mVideoEncorderBitratePref,
                                      String.valueOf(AppPrefs.getVideoOptimizeQuality()),
                                      getLabelForVideoEncoderBitrateValue(AppPrefs.getVideoOptimizeQuality()));
-        if (!WPMediaUtils.isVideoOptimizationAvailable()) {
-            WPPrefUtils.removePreference(this, R.string.pref_key_optimize_media, R.string.pref_key_optimize_video);
-            WPPrefUtils.removePreference(this, R.string.pref_key_optimize_media, R.string.pref_key_site_video_width);
-            WPPrefUtils.removePreference(this, R.string.pref_key_optimize_media,
-                                         R.string.pref_key_site_video_encoder_bitrate);
-        }
 
-        updateEditorSettings();
+        mGutenbergDefaultForNewPosts.setChecked(AppPrefs.isGutenbergDefaultForNewPosts());
+        mStripImageLocation.setChecked(AppPrefs.isStripImageLocation());
+
+        if (!BuildConfig.OFFER_GUTENBERG) {
+            removeExperimentalCategory();
+        }
+    }
+
+    private void removeExperimentalCategory() {
+        PreferenceCategory experimentalPreferenceCategory =
+                (PreferenceCategory) findPreference(getString(R.string.pref_key_experimental_section));
+        PreferenceScreen preferenceScreen =
+                (PreferenceScreen) findPreference(getString(R.string.pref_key_app_settings_root));
+        preferenceScreen.removePreference(experimentalPreferenceCategory);
     }
 
     @Override
@@ -288,6 +305,12 @@ public class AppSettingsFragment extends PreferenceFragment
             setDetailListPreferenceValue(mVideoEncorderBitratePref,
                                          newValue.toString(),
                                          getLabelForVideoEncoderBitrateValue(AppPrefs.getVideoOptimizeQuality()));
+        } else if (preference == mGutenbergDefaultForNewPosts) {
+            AppPrefs.setGutenbergDefaultForNewPosts((Boolean) newValue);
+            // we need to refresh metadata as gutenberg_enabled is now part of the user data
+            AnalyticsUtils.refreshMetadata(mAccountStore, mSiteStore);
+        } else if (preference == mStripImageLocation) {
+            AppPrefs.setStripImageLocation((Boolean) newValue);
         }
         return true;
     }

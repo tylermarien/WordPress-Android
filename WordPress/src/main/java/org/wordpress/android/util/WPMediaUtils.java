@@ -8,7 +8,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.support.annotation.NonNull;
@@ -26,7 +25,6 @@ import org.wordpress.android.fluxc.store.MediaStore.MediaError;
 import org.wordpress.android.ui.RequestCodes;
 import org.wordpress.android.ui.prefs.AppPrefs;
 import org.wordpress.android.util.AppLog.T;
-import org.wordpress.passcodelock.AppLockManager;
 
 import java.io.File;
 import java.io.IOException;
@@ -82,12 +80,8 @@ public class WPMediaUtils {
         return null;
     }
 
-    public static boolean isVideoOptimizationAvailable() {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2;
-    }
-
     public static boolean isVideoOptimizationEnabled() {
-        return isVideoOptimizationAvailable() && AppPrefs.isVideoOptimize();
+        return AppPrefs.isVideoOptimize();
     }
 
     /**
@@ -221,7 +215,6 @@ public class WPMediaUtils {
     }
 
     public static void launchVideoLibrary(Activity activity, boolean multiSelect) {
-        AppLockManager.getInstance().setExtendedTimeout();
         activity.startActivityForResult(prepareVideoLibraryIntent(activity, multiSelect),
                                         RequestCodes.VIDEO_LIBRARY);
     }
@@ -230,15 +223,12 @@ public class WPMediaUtils {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("video/*");
         if (multiSelect) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-            }
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         }
         return Intent.createChooser(intent, context.getString(R.string.pick_video));
     }
 
     public static void launchVideoCamera(Activity activity) {
-        AppLockManager.getInstance().setExtendedTimeout();
         activity.startActivityForResult(prepareVideoCameraIntent(), RequestCodes.TAKE_VIDEO);
     }
 
@@ -247,7 +237,6 @@ public class WPMediaUtils {
     }
 
     public static void launchPictureLibrary(Activity activity, boolean multiSelect) {
-        AppLockManager.getInstance().setExtendedTimeout();
         activity.startActivityForResult(
                 preparePictureLibraryIntent(activity.getString(R.string.pick_photo), multiSelect),
                 RequestCodes.PICTURE_LIBRARY);
@@ -257,9 +246,7 @@ public class WPMediaUtils {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("image/*");
         if (multiSelect) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-            }
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         }
         return Intent.createChooser(intent, title);
     }
@@ -273,7 +260,6 @@ public class WPMediaUtils {
     public static void launchCamera(Activity activity, String applicationId, LaunchCameraCallback callback) {
         Intent intent = prepareLaunchCamera(activity, applicationId, callback);
         if (intent != null) {
-            AppLockManager.getInstance().setExtendedTimeout();
             activity.startActivityForResult(intent, RequestCodes.TAKE_PHOTO);
         }
     }
@@ -353,17 +339,17 @@ public class WPMediaUtils {
 
     public static int getPlaceholder(String url) {
         if (MediaUtils.isValidImage(url)) {
-            return R.drawable.ic_gridicons_image;
+            return R.drawable.ic_image_white_24dp;
         } else if (MediaUtils.isDocument(url)) {
-            return R.drawable.ic_gridicons_page;
+            return R.drawable.ic_pages_white_24dp;
         } else if (MediaUtils.isPowerpoint(url)) {
             return R.drawable.media_powerpoint;
         } else if (MediaUtils.isSpreadsheet(url)) {
             return R.drawable.media_spreadsheet;
         } else if (MediaUtils.isVideo(url)) {
-            return R.drawable.ic_gridicons_video_camera;
+            return R.drawable.ic_video_camera_white_24dp;
         } else if (MediaUtils.isAudio(url)) {
-            return R.drawable.ic_gridicons_audio;
+            return R.drawable.ic_audio_white_24dp;
         } else {
             return 0;
         }
@@ -434,29 +420,51 @@ public class WPMediaUtils {
         void doNext(Uri uri);
     }
 
-    public static boolean fetchMediaAndDoNext(Context context, Uri mediaUri, MediaFetchDoNext listener) {
-        if (!MediaUtils.isInMediaStore(mediaUri)) {
+    /**
+     * Downloads the {@code mediaUri} and returns the {@link Uri} for the downloaded file
+     * <p>
+     * If the {@code mediaUri} is already in the the local store, no download will be done and the given
+     * {@code mediaUri} will be returned instead. This may return null if the download fails.
+     * <p>
+     * The current thread is blocked until the download is finished.
+     *
+     * @return A local {@link Uri} or null if the download failed
+     */
+    public static @Nullable Uri fetchMedia(@NonNull Context context, @NonNull Uri mediaUri) {
+        if (MediaUtils.isInMediaStore(mediaUri)) {
+            return mediaUri;
+        }
+
+        try {
             // Do not download the file in async task. See
             // https://github.com/wordpress-mobile/WordPress-Android/issues/5818
-            Uri downloadedUri = null;
-            try {
-                downloadedUri = MediaUtils.downloadExternalMedia(context, mediaUri);
-            } catch (IllegalStateException e) {
-                // Ref: https://github.com/wordpress-mobile/WordPress-Android/issues/5823
-                AppLog.e(AppLog.T.UTILS, "Can't download the image at: " + mediaUri.toString(), e);
-                CrashlyticsUtils.logException(e, AppLog.T.MEDIA, "Can't download the image at: " + mediaUri.toString()
-                                                                 + " See issue #5823");
-            }
-            if (downloadedUri != null) {
-                listener.doNext(downloadedUri);
-            } else {
-                ToastUtils.showToast(context, R.string.error_downloading_image,
-                                     ToastUtils.Duration.SHORT);
-                return false;
-            }
-        } else {
-            listener.doNext(mediaUri);
+            return MediaUtils.downloadExternalMedia(context, mediaUri);
+        } catch (IllegalStateException e) {
+            // Ref: https://github.com/wordpress-mobile/WordPress-Android/issues/5823
+            AppLog.e(AppLog.T.UTILS, "Can't download the image at: " + mediaUri.toString(), e);
+            CrashlyticsUtils.logException(e, AppLog.T.MEDIA, "Can't download the image at: " + mediaUri.toString()
+                                                             + " See issue #5823");
+
+            return null;
         }
-        return true;
+    }
+
+    /**
+     * Downloads the given {@code mediaUri} and calls {@code listener} if successful
+     * <p>
+     * If the download fails, a {@link android.widget.Toast} will be shown.
+     *
+     * @return A {@link Boolean} indicating whether the download was successful
+     */
+    public static boolean fetchMediaAndDoNext(Context context, Uri mediaUri, MediaFetchDoNext listener) {
+        final Uri downloadedUri = fetchMedia(context, mediaUri);
+        if (downloadedUri != null) {
+            listener.doNext(downloadedUri);
+            return true;
+        } else {
+            ToastUtils.showToast(context, R.string.error_downloading_image,
+                    ToastUtils.Duration.SHORT);
+            return false;
+        }
     }
 }

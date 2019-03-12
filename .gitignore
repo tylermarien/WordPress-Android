@@ -32,7 +32,6 @@ local.properties
 /.idea/*
 
 # IntelliJ/Android Studio exceptions
-!/.idea/vcs.xml
 !/.idea/codeStyles/
 !/.idea/fileTemplates/
 !/.idea/inspectionProfiles/
@@ -77,3 +76,10 @@ google-services.json
 fastlane/.env*
 fastlane/report.xml
 fastlane/README.md
+fastlane/metadata/android/screenshots.html
+fastlane/metadata/android/*/images/
+fastlane/screenshots_orig
+
+# Bundler
+/.bundle
+/vendor

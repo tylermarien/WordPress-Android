@@ -15,6 +15,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import org.wordpress.android.R;
+import org.wordpress.android.util.ColorUtils;
 
 /**
  * Follow button used in reader detail
@@ -73,12 +74,15 @@ public class ReaderFollowButton extends LinearLayout {
         // show green icon if site is followed, gray icon if not followed and there's a caption,
         // blue icon if not followed and there is no caption
         int drawableId;
+        int colorId;
         if (mIsFollowed) {
-            drawableId = R.drawable.ic_reader_following_alert_green_24dp;
+            drawableId = R.drawable.ic_reader_following_white_24dp;
+            colorId = R.color.alert_green;
         } else {
-            drawableId = R.drawable.ic_reader_follow_blue_medium_24dp;
+            drawableId = R.drawable.ic_reader_follow_white_24dp;
+            colorId = R.color.blue_medium;
         }
-        mImageFollow.setImageResource(drawableId);
+        ColorUtils.INSTANCE.setImageResourceWithTint(mImageFollow, drawableId, colorId);
     }
 
     @Override

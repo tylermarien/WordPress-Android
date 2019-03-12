@@ -12,14 +12,15 @@ import org.wordpress.android.fluxc.model.MediaModel;
 import org.wordpress.android.fluxc.model.PostModel;
 import org.wordpress.android.fluxc.model.SiteModel;
 import org.wordpress.android.fluxc.store.MediaStore.CancelMediaPayload;
-import org.wordpress.android.fluxc.store.MediaStore.MediaPayload;
 import org.wordpress.android.fluxc.store.MediaStore.OnMediaUploaded;
+import org.wordpress.android.fluxc.store.MediaStore.UploadMediaPayload;
 import org.wordpress.android.fluxc.store.SiteStore;
-import org.wordpress.android.util.AnalyticsUtils;
+import org.wordpress.android.ui.prefs.AppPrefs;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
 import org.wordpress.android.util.StringUtils;
 import org.wordpress.android.util.WPMediaUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,7 +42,7 @@ public class MediaUploadHandler implements UploadHandler<MediaModel>, VideoOptim
     @Inject SiteStore mSiteStore;
 
     MediaUploadHandler() {
-        ((WordPress) WordPress.getContext()).component().inject(this);
+        ((WordPress) WordPress.getContext().getApplicationContext()).component().inject(this);
         AppLog.i(T.MEDIA, "MediaUploadHandler > Created");
         mDispatcher.register(this);
         EventBus.getDefault().register(this);
@@ -294,7 +295,7 @@ public class MediaUploadHandler implements UploadHandler<MediaModel>, VideoOptim
         addUniqueMediaToInProgressUploads(media);
 
         mDispatcher.dispatch(MediaActionBuilder.newUpdateMediaAction(media));
-        MediaPayload payload = new MediaPayload(site, media);
+        UploadMediaPayload payload = new UploadMediaPayload(site, media, AppPrefs.isStripImageLocation());
         mDispatcher.dispatch(MediaActionBuilder.newUploadMediaAction(payload));
     }
 

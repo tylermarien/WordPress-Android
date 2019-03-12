@@ -1,10 +1,8 @@
 package org.wordpress.android.ui.accounts.signup;
 
 import android.content.Context;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.support.v7.content.res.AppCompatResources;
 import android.support.v7.widget.RecyclerView;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -63,15 +61,6 @@ public class SiteCreationDomainAdapter extends RecyclerView.Adapter<RecyclerView
         private InputViewHolder(View itemView) {
             super(itemView);
             this.mInput = itemView.findViewById(R.id.input);
-            if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-                this.mInput.setCompoundDrawablesRelativeWithIntrinsicBounds(
-                        AppCompatResources.getDrawable(itemView.getContext(), R.drawable.ic_search_grey_24dp),
-                        null, null, null);
-            } else {
-                this.mInput.setCompoundDrawablesWithIntrinsicBounds(
-                        AppCompatResources.getDrawable(itemView.getContext(), R.drawable.ic_search_grey_24dp),
-                        null, null, null);
-            }
             this.mProgressBar = itemView.findViewById(R.id.progress_bar);
 
             this.mTextWatcher = new TextWatcher() {
@@ -152,10 +141,12 @@ public class SiteCreationDomainAdapter extends RecyclerView.Adapter<RecyclerView
                                                                    false));
             case VIEW_TYPE_INPUT:
                 return new InputViewHolder(LayoutInflater.from(parent.getContext())
-                                                         .inflate(R.layout.site_creation_domain_input, parent, false));
+                                                         .inflate(R.layout.site_creation_domain_input, parent,
+                                                                 false));
             case VIEW_TYPE_ITEM:
                 return new DomainViewHolder(LayoutInflater.from(parent.getContext())
-                                                          .inflate(R.layout.site_creation_domain_item, parent, false));
+                                                          .inflate(R.layout.site_creation_domain_item, parent,
+                                                                  false));
             default:
                 throw new RuntimeException("Unknown view type " + viewType);
         }

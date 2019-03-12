@@ -24,20 +24,20 @@ import org.wordpress.android.fluxc.model.PostModel;
 import org.wordpress.android.fluxc.model.SiteModel;
 import org.wordpress.android.fluxc.model.post.PostStatus;
 import org.wordpress.android.fluxc.store.MediaStore;
-import org.wordpress.android.fluxc.store.MediaStore.MediaPayload;
 import org.wordpress.android.fluxc.store.MediaStore.OnMediaUploaded;
+import org.wordpress.android.fluxc.store.MediaStore.UploadMediaPayload;
 import org.wordpress.android.fluxc.store.PostStore.OnPostUploaded;
 import org.wordpress.android.fluxc.store.PostStore.RemotePostPayload;
 import org.wordpress.android.fluxc.store.SiteStore;
 import org.wordpress.android.ui.posts.PostUtils;
 import org.wordpress.android.ui.prefs.AppPrefs;
 import org.wordpress.android.ui.uploads.PostEvents.PostUploadStarted;
-import org.wordpress.android.util.AnalyticsUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
 import org.wordpress.android.util.FluxCUtils;
 import org.wordpress.android.util.MediaUtils;
 import org.wordpress.android.util.SqlUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
 import org.wordpress.android.util.helpers.MediaFile;
 
 import java.io.File;
@@ -74,7 +74,7 @@ public class PostUploadHandler implements UploadHandler<PostModel> {
     @Inject MediaStore mMediaStore;
 
     PostUploadHandler(PostUploadNotifier postUploadNotifier) {
-        ((WordPress) WordPress.getContext()).component().inject(this);
+        ((WordPress) WordPress.getContext().getApplicationContext()).component().inject(this);
         AppLog.i(T.POSTS, "PostUploadHandler > Created");
         mDispatcher.register(this);
         mPostUploadNotifier = postUploadNotifier;
@@ -254,7 +254,7 @@ public class PostUploadHandler implements UploadHandler<PostModel> {
                 prepareUploadAnalytics(mPost.getContent());
             }
 
-            EventBus.getDefault().post(new PostUploadStarted(mPost.getLocalSiteId()));
+            EventBus.getDefault().post(new PostUploadStarted(mPost));
 
             RemotePostPayload payload = new RemotePostPayload(mPost, mSite);
             mDispatcher.dispatch(PostActionBuilder.newPushPostAction(payload));
@@ -269,42 +269,56 @@ public class PostUploadHandler implements UploadHandler<PostModel> {
         }
 
         private void prepareUploadAnalytics(String postContent) {
-            // Calculate the words count
-            sCurrentUploadingPostAnalyticsProperties = new HashMap<>();
-            sCurrentUploadingPostAnalyticsProperties.put("word_count", AnalyticsUtils.getWordCount(mPost.getContent()));
-            sCurrentUploadingPostAnalyticsProperties.put("editor_source", AppPrefs.isAztecEditorEnabled() ? "aztec"
-                    : AppPrefs.isVisualEditorEnabled() ? "hybrid" : "legacy");
+            // Other methods (like 'uploadNextPost') synchronize over `sQueuedPostsList` before setting
+            // `sCurrentUploadingPostAnalyticsProperties` to null. Make sure racing conditions are avoid here
+            // by synchronizing over sQueuedPostsList.
+            // See https://github.com/wordpress-mobile/WordPress-Android/issues/7990
+            synchronized (sQueuedPostsList) {
+                // Calculate the words count
+                sCurrentUploadingPostAnalyticsProperties = new HashMap<>();
+                sCurrentUploadingPostAnalyticsProperties
+                        .put("word_count", AnalyticsUtils.getWordCount(mPost.getContent()));
+                sCurrentUploadingPostAnalyticsProperties.put("editor_source",
+                        // making sure to reuse the same logic for both showing Gutenberg and tracking.
+                        // Note that mIsNewPost is not available as a flag-logic per se outside of EditPostActivity,
+                        // but the check will pass anyway as long as Gutenberg is enabled and the PostModel contains
+                        // Gutenberg blocks. As a proxy to mIsNewPost, we're using postModel.isLocalDraft(). The
+                        // choice is loosely made knowing the other check ("contains blocks") is in place.
+                        PostUtils.shouldShowGutenbergEditor(mPost.isLocalDraft(), mPost) ? "gutenberg"
+                                : (AppPrefs.isAztecEditorEnabled() ? "aztec"
+                                        : AppPrefs.isVisualEditorEnabled() ? "hybrid" : "legacy"));
 
-            if (hasGallery()) {
-                sCurrentUploadingPostAnalyticsProperties.put("with_galleries", true);
+                if (hasGallery()) {
+                    sCurrentUploadingPostAnalyticsProperties.put("with_galleries", true);
+                }
+                if (!mHasImage) {
+                    // Check if there is a img tag in the post. Media added in any editor other than legacy.
+                    String imageTagsPattern = "<img[^>]+src\\s*=\\s*[\"]([^\"]+)[\"][^>]*>";
+                    Pattern pattern = Pattern.compile(imageTagsPattern);
+                    Matcher matcher = pattern.matcher(postContent);
+                    mHasImage = matcher.find();
+                }
+                if (mHasImage) {
+                    sCurrentUploadingPostAnalyticsProperties.put("with_photos", true);
+                }
+                if (!mHasVideo) {
+                    // Check if there is a video tag in the post. Media added in any editor other than legacy.
+                    String videoTagsPattern =
+                            "<video[^>]+src\\s*=\\s*[\"]([^\"]+)[\"][^>]*>|\\[wpvideo\\s+([^\\]]+)\\]";
+                    Pattern pattern = Pattern.compile(videoTagsPattern);
+                    Matcher matcher = pattern.matcher(postContent);
+                    mHasVideo = matcher.find();
+                }
+                if (mHasVideo) {
+                    sCurrentUploadingPostAnalyticsProperties.put("with_videos", true);
+                }
+                if (mHasCategory) {
+                    sCurrentUploadingPostAnalyticsProperties.put("with_categories", true);
+                }
+                if (!mPost.getTagNameList().isEmpty()) {
+                    sCurrentUploadingPostAnalyticsProperties.put("with_tags", true);
+                }
             }
-            if (!mHasImage) {
-                // Check if there is a img tag in the post. Media added in any editor other than legacy.
-                String imageTagsPattern = "<img[^>]+src\\s*=\\s*[\"]([^\"]+)[\"][^>]*>";
-                Pattern pattern = Pattern.compile(imageTagsPattern);
-                Matcher matcher = pattern.matcher(postContent);
-                mHasImage = matcher.find();
-            }
-            if (mHasImage) {
-                sCurrentUploadingPostAnalyticsProperties.put("with_photos", true);
-            }
-            if (!mHasVideo) {
-                // Check if there is a video tag in the post. Media added in any editor other than legacy.
-                String videoTagsPattern = "<video[^>]+src\\s*=\\s*[\"]([^\"]+)[\"][^>]*>|\\[wpvideo\\s+([^\\]]+)\\]";
-                Pattern pattern = Pattern.compile(videoTagsPattern);
-                Matcher matcher = pattern.matcher(postContent);
-                mHasVideo = matcher.find();
-            }
-            if (mHasVideo) {
-                sCurrentUploadingPostAnalyticsProperties.put("with_videos", true);
-            }
-            if (mHasCategory) {
-                sCurrentUploadingPostAnalyticsProperties.put("with_categories", true);
-            }
-            if (!mPost.getTagNameList().isEmpty()) {
-                sCurrentUploadingPostAnalyticsProperties.put("with_tags", true);
-            }
-            sCurrentUploadingPostAnalyticsProperties.put("via_new_editor", AppPrefs.isVisualEditorEnabled());
         }
 
         /**
@@ -469,7 +483,11 @@ public class PostUploadHandler implements UploadHandler<PostModel> {
             }
 
             CountDownLatch countDownLatch = new CountDownLatch(1);
-            MediaPayload payload = new MediaPayload(mSite, FluxCUtils.mediaModelFromMediaFile(mediaFile));
+            UploadMediaPayload payload = new UploadMediaPayload(
+                    mSite,
+                    FluxCUtils.mediaModelFromMediaFile(mediaFile),
+                    AppPrefs.isStripImageLocation()
+            );
             mDispatcher.dispatch(MediaActionBuilder.newUploadMediaAction(payload));
 
             try {
@@ -501,7 +519,11 @@ public class PostUploadHandler implements UploadHandler<PostModel> {
 
         private String uploadImageFile(MediaFile mediaFile, SiteModel site) {
             CountDownLatch countDownLatch = new CountDownLatch(1);
-            MediaPayload payload = new MediaPayload(site, FluxCUtils.mediaModelFromMediaFile(mediaFile));
+            UploadMediaPayload payload = new UploadMediaPayload(
+                    site,
+                    FluxCUtils.mediaModelFromMediaFile(mediaFile),
+                    AppPrefs.isStripImageLocation()
+            );
             mDispatcher.dispatch(MediaActionBuilder.newUploadMediaAction(payload));
 
             try {
@@ -547,7 +569,7 @@ public class PostUploadHandler implements UploadHandler<PostModel> {
             AppLog.w(T.POSTS, "PostUploadHandler > Post upload failed. " + event.error.type + ": "
                               + event.error.message);
             Context context = WordPress.getContext();
-            String errorMessage = UploadUtils.getErrorMessageFromPostError(context, event.post, event.error);
+            String errorMessage = UploadUtils.getErrorMessageFromPostError(context, event.post.isPage(), event.error);
             String notificationMessage = UploadUtils.getErrorMessage(context, event.post, errorMessage, false);
             mPostUploadNotifier.incrementUploadedPostCountFromForegroundNotification(event.post);
             mPostUploadNotifier.updateNotificationErrorForPost(event.post, site, notificationMessage, 0);

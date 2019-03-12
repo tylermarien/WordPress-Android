@@ -77,10 +77,8 @@
         <item name="android:textSize">@dimen/text_sz_extra_large</item>
         <item name="android:textStyle">bold</item>
         <item name="android:textColor">@color/grey_dark</item>
-        <item name="android:paddingLeft">@dimen/dlp_title_padding_start</item>
-        <item name="android:paddingStart" tools:targetApi="jelly_bean_mr1">@dimen/dlp_title_padding_start</item>
-        <item name="android:paddingRight">@dimen/dlp_title_padding_end</item>
-        <item name="android:paddingEnd" tools:targetApi="jelly_bean_mr1">@dimen/dlp_title_padding_end</item>
+        <item name="android:paddingStart">@dimen/dlp_title_padding_start</item>
+        <item name="android:paddingEnd">@dimen/dlp_title_padding_end</item>
     </style>
 
     <style name="CalypsoTheme.NoActionBarShadow" parent="CalypsoTheme">
@@ -103,25 +101,5 @@
 
     <style name="Calypso.TextAppearance" parent="@android:style/TextAppearance">
         <item name="android:textColor">@color/grey_dark</item>
-    </style>
-
-    <style name="Calypso.Text.Header" parent="android:Widget.TextView">
-        <item name="android:textSize">@dimen/text_sz_medium</item>
-        <item name="android:textColor">@color/grey_darken_10</item>
-        <item name="android:textStyle">bold</item>
-    </style>
-
-    <style name="Calypso.SegmentedControl" parent="Widget.AppCompat.CompoundButton.RadioButton">
-        <item name="android:layout_width">wrap_content</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:minHeight">32dp</item>
-        <item name="android:layout_weight">1</item>
-        <item name="android:button">@null</item>
-        <item name="android:gravity">center</item>
-        <item name="android:padding">4dp</item>
-        <item name="android:textColor">@color/calypso_segmented_control_text</item>
-        <item name="android:textSize">@dimen/text_sz_small</item>
-        <item name="android:singleLine">true</item>
-        <item name="android:ellipsize">end</item>
     </style>
 </resources>

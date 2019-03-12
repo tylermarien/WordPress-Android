@@ -53,6 +53,7 @@ import org.wordpress.android.ui.notifications.NotificationEvents;
 import org.wordpress.android.ui.notifications.utils.NotificationsUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
+import org.wordpress.android.util.ColorUtils;
 import org.wordpress.android.util.SiteUtils;
 import org.wordpress.android.util.ToastUtils;
 import org.wordpress.android.util.ToastUtils.Duration;
@@ -565,14 +566,13 @@ public class NotificationsSettingsFragment extends PreferenceFragment
             subscriptions = mAccountStore.getSubscriptions();
         }
 
-        mSubscriptionCount = subscriptions.size();
         Context context = getActivity();
         blogsCategory.removeAll();
 
         int maxSitesToShow = showAll ? NO_MAXIMUM : MAX_SITES_TO_SHOW_ON_FIRST_SCREEN;
-        int count = 0;
+        mSubscriptionCount = 0;
 
-        if (mSubscriptionCount > 0) {
+        if (subscriptions.size() > 0) {
             Collections.sort(subscriptions, new Comparator<SubscriptionModel>() {
                 @Override public int compare(SubscriptionModel o1, SubscriptionModel o2) {
                     return getSiteNameOrHostFromSubscription(o1)
@@ -582,13 +582,14 @@ public class NotificationsSettingsFragment extends PreferenceFragment
         }
 
         for (final SubscriptionModel subscription : subscriptions) {
-            if (context == null) {
-                return;
+            // Subscriptions with a "false" blogId are for feeds and don't have notifications settings.
+            if (context == null || subscription.getBlogId().equalsIgnoreCase("false")) {
+                break;
             }
 
-            count++;
+            mSubscriptionCount++;
 
-            if (maxSitesToShow != NO_MAXIMUM && count > maxSitesToShow) {
+            if (!showAll && mSubscriptionCount > maxSitesToShow) {
                 break;
             }
 
@@ -631,7 +632,7 @@ public class NotificationsSettingsFragment extends PreferenceFragment
         }
 
         // Add view all entry when more sites than maximum to show.
-        if (mSubscriptionCount > maxSitesToShow && !showAll) {
+        if (!showAll && mSubscriptionCount > maxSitesToShow) {
             appendViewAllSitesOption(context, getString(R.string.pref_notification_blogs_followed), true);
         }
 
@@ -708,7 +709,9 @@ public class NotificationsSettingsFragment extends PreferenceFragment
                 context, null, channel, NotificationsSettings.Type.TIMELINE, blogId, mNotificationsSettings,
                 mOnSettingsChangedListener
         );
-        timelinePreference.setIcon(R.drawable.ic_bell_grey_darken_24dp);
+
+        timelinePreference.setIcon(ColorUtils.INSTANCE.applyTintToDrawable(context, R.drawable.ic_bell_white_24dp,
+                R.color.grey_darken_30));
         timelinePreference.setTitle(R.string.notifications_tab);
         timelinePreference.setDialogTitle(R.string.notifications_tab);
         timelinePreference.setSummary(R.string.notifications_tab_summary);
@@ -718,7 +721,9 @@ public class NotificationsSettingsFragment extends PreferenceFragment
                 context, null, channel, NotificationsSettings.Type.EMAIL, blogId, mNotificationsSettings,
                 mOnSettingsChangedListener
         );
-        emailPreference.setIcon(R.drawable.ic_mail_grey_darken_24dp);
+
+        emailPreference.setIcon(ColorUtils.INSTANCE.applyTintToDrawable(context, R.drawable.ic_mail_white_24dp,
+                R.color.grey_darken_30));
         emailPreference.setTitle(R.string.email);
         emailPreference.setDialogTitle(R.string.email);
         emailPreference.setSummary(R.string.notifications_email_summary);
@@ -731,7 +736,9 @@ public class NotificationsSettingsFragment extends PreferenceFragment
                     context, null, channel, NotificationsSettings.Type.DEVICE, blogId, mNotificationsSettings,
                     mOnSettingsChangedListener
             );
-            devicePreference.setIcon(R.drawable.ic_phone_grey_darken_24dp);
+
+            devicePreference.setIcon(ColorUtils.INSTANCE.applyTintToDrawable(context, R.drawable.ic_phone_white_24dp,
+                    R.color.grey_darken_30));
             devicePreference.setTitle(R.string.app_notifications);
             devicePreference.setDialogTitle(R.string.app_notifications);
             devicePreference.setSummary(R.string.notifications_push_summary);

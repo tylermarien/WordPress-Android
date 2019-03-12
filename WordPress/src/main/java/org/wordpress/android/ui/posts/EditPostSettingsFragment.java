@@ -33,7 +33,6 @@ import com.google.android.gms.location.places.ui.PlacePicker;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.LatLngBounds;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.text.StringEscapeUtils;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
@@ -63,13 +62,14 @@ import org.wordpress.android.ui.posts.PostSettingsListDialogFragment.DialogType;
 import org.wordpress.android.ui.prefs.AppPrefs;
 import org.wordpress.android.ui.prefs.SiteSettingsInterface;
 import org.wordpress.android.ui.prefs.SiteSettingsInterface.SiteSettingsListener;
+import org.wordpress.android.ui.reader.utils.ReaderUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
 import org.wordpress.android.util.DateTimeUtils;
 import org.wordpress.android.util.DisplayUtils;
 import org.wordpress.android.util.GeocoderUtils;
-import org.wordpress.android.util.PhotonUtils;
 import org.wordpress.android.util.SiteUtils;
+import org.wordpress.android.util.StringUtils;
 import org.wordpress.android.util.ToastUtils;
 import org.wordpress.android.util.image.ImageManager;
 import org.wordpress.android.util.image.ImageType;
@@ -119,6 +119,8 @@ public class EditPostSettingsFragment extends Fragment {
 
     private PostLocation mPostLocation;
 
+    private ArrayList<String> mDefaultPostFormatKeys;
+    private ArrayList<String> mDefaultPostFormatNames;
     private ArrayList<String> mPostFormatKeys;
     private ArrayList<String> mPostFormatNames;
 
@@ -144,6 +146,13 @@ public class EditPostSettingsFragment extends Fragment {
         super.onCreate(savedInstanceState);
         ((WordPress) getActivity().getApplicationContext()).component().inject(this);
         mDispatcher.register(this);
+
+        // Early load the default lists for post format keys and names.
+        // Will use it later without needing to have access to the Resources.
+        mDefaultPostFormatKeys =
+                new ArrayList<>(Arrays.asList(getResources().getStringArray(R.array.post_format_keys)));
+        mDefaultPostFormatNames = new ArrayList<>(Arrays.asList(getResources()
+                .getStringArray(R.array.post_format_display_names)));
     }
 
     @Override
@@ -644,7 +653,7 @@ public class EditPostSettingsFragment extends Fragment {
         updateCategoriesTextView();
     }
 
-    private void updatePostStatus(String postStatus) {
+    public void updatePostStatus(String postStatus) {
         getPost().setStatus(postStatus);
         updatePostStatusRelatedViews();
         updateSaveButton();
@@ -700,6 +709,11 @@ public class EditPostSettingsFragment extends Fragment {
 
     private void updatePublishDate(Calendar calendar) {
         getPost().setDateCreated(DateTimeUtils.iso8601FromDate(calendar.getTime()));
+        // Posts that are scheduled have a `future` date for REST but their status should be set to `published` as
+        // there is no `future` entry in XML-RPC (see PostStatus in FluxC for more info)
+        if (!PostUtils.shouldPublishImmediately(getPost())) {
+            updatePostStatus(PostStatus.PUBLISHED.toString());
+        }
         updatePublishDateTextView();
         updateSaveButton();
     }
@@ -778,17 +792,18 @@ public class EditPostSettingsFragment extends Fragment {
     // Post Format Helpers
 
     private void updatePostFormatKeysAndNames() {
-        if (getActivity() == null || getSite() == null) {
+        final SiteModel site = getSite();
+        if (site == null) {
             // Since this method can get called after a callback, we have to make sure we have the site
             return;
         }
-        // Default values
-        mPostFormatKeys = new ArrayList<>(Arrays.asList(getResources().getStringArray(R.array.post_format_keys)));
-        mPostFormatNames = new ArrayList<>(Arrays.asList(getResources()
-                                                                 .getStringArray(R.array.post_format_display_names)));
+
+        // Initialize the lists from the defaults
+        mPostFormatKeys = new ArrayList<>(mDefaultPostFormatKeys);
+        mPostFormatNames = new ArrayList<>(mDefaultPostFormatNames);
 
         // If we have specific values for this site, use them
-        List<PostFormatModel> postFormatModels = mSiteStore.getPostFormats(getSite());
+        List<PostFormatModel> postFormatModels = mSiteStore.getPostFormats(site);
         for (PostFormatModel postFormatModel : postFormatModels) {
             if (!mPostFormatKeys.contains(postFormatModel.getSlug())) {
                 mPostFormatKeys.add(postFormatModel.getSlug());
@@ -856,14 +871,11 @@ public class EditPostSettingsFragment extends Fragment {
         // Get max width for photon thumbnail
         int width = DisplayUtils.getDisplayPixelWidth(getActivity());
         int height = DisplayUtils.getDisplayPixelHeight(getActivity());
-        int size = Math.max(width, height);
 
-        String mediaUri = media.getThumbnailUrl();
-        if (SiteUtils.isPhotonCapable(siteModel)) {
-            mediaUri = PhotonUtils.getPhotonImageUrl(mediaUri, size, 0);
-        }
-
-        mImageManager.load(mFeaturedImageView, ImageType.PHOTO, mediaUri, ScaleType.FIT_CENTER);
+        String mediaUri = StringUtils.notNullStr(media.getThumbnailUrl());
+        String photonUrl = ReaderUtils.getResizedImageUrl(
+                mediaUri, width, height, !SiteUtils.isPhotonCapable(siteModel));
+        mImageManager.load(mFeaturedImageView, ImageType.PHOTO, photonUrl, ScaleType.FIT_CENTER);
     }
 
     private void launchFeaturedMediaPicker() {

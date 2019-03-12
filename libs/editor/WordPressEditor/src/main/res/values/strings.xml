@@ -119,6 +119,7 @@
 
     <string name="menu_undo">Undo</string>
     <string name="menu_redo">Redo</string>
+    <string name="menu_debug">Debug Menu</string>
 
     <string name="media_insert_unimplemented">Apologies! Feature not implemented yet :(</string>
     <string name="error_media_load">Unable to load media</string>
@@ -126,5 +127,11 @@
 
     <string name="stop_upload_dialog_button_yes">Yes</string>
     <string name="stop_upload_dialog_button_no">No</string>
+
+    <string name="retry_failed_upload_title">Retry uploading?</string>
+    <string name="retry_failed_upload_yes">Retry</string>
+    <string name="retry_failed_upload_remove">Remove</string>
+    <string name="retry_failed_upload_retry_all">Retry all</string>
+
 
 </resources>

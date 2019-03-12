@@ -24,6 +24,7 @@ import org.wordpress.android.fluxc.model.MediaModel.MediaUploadState;
 import org.wordpress.android.fluxc.model.SiteModel;
 import org.wordpress.android.util.AniUtils;
 import org.wordpress.android.util.AppLog;
+import org.wordpress.android.util.ColorUtils;
 import org.wordpress.android.util.DisplayUtils;
 import org.wordpress.android.util.ImageUtils;
 import org.wordpress.android.util.MediaUtils;
@@ -87,7 +88,7 @@ public class MediaGridAdapter extends RecyclerView.Adapter<MediaGridAdapter.Grid
 
     public MediaGridAdapter(@NonNull Context context, @NonNull SiteModel site, @NonNull MediaBrowserType browserType) {
         super();
-        ((WordPress) WordPress.getContext()).component().inject(this);
+        ((WordPress) WordPress.getContext().getApplicationContext()).component().inject(this);
         setHasStableIds(true);
 
         mContext = context;
@@ -178,7 +179,7 @@ public class MediaGridAdapter extends RecyclerView.Adapter<MediaGridAdapter.Grid
             }
         } else if (media.isVideo()) {
             holder.mFileContainer.setVisibility(View.GONE);
-            loadVideoThumbnail(media, holder.mImageView);
+            loadVideoThumbnail(position, media, holder.mImageView);
         } else {
             // not an image or video, so show file name and file type
             String fileName = media.getFileName();
@@ -188,7 +189,8 @@ public class MediaGridAdapter extends RecyclerView.Adapter<MediaGridAdapter.Grid
             holder.mTitleView.setText(TextUtils.isEmpty(title) ? fileName : title);
             holder.mFileTypeView.setText(fileExtension.toUpperCase(Locale.ROOT));
             int placeholderResId = WPMediaUtils.getPlaceholder(fileName);
-            holder.mFileTypeImageView.setImageResource(placeholderResId);
+            ColorUtils.INSTANCE.setImageResourceWithTint(holder.mFileTypeImageView, placeholderResId, R.color.grey);
+            mImageManager.cancelRequestAndClearImageView(holder.mImageView);
         }
         holder.mImageView.setContentDescription(mContext.getString(R.string.media_grid_item_image_desc,
                 StringUtils.notNullStr(media.getFileName())));
@@ -252,7 +254,6 @@ public class MediaGridAdapter extends RecyclerView.Adapter<MediaGridAdapter.Grid
     public void onViewRecycled(GridViewHolder holder) {
         super.onViewRecycled(holder);
         holder.mImageView.setTag(R.id.media_grid_file_path_id, null);
-        mImageManager.cancelRequestAndClearImageView(holder.mImageView);
     }
 
     public ArrayList<Integer> getSelectedItems() {
@@ -429,9 +430,10 @@ public class MediaGridAdapter extends RecyclerView.Adapter<MediaGridAdapter.Grid
     /*
      * loads the thumbnail for the passed video media item - works with both local and network videos
      */
-    private void loadVideoThumbnail(final @NonNull MediaModel media, @NonNull final ImageView imageView) {
+    private void loadVideoThumbnail(final int position, final @NonNull MediaModel media,
+                                    @NonNull final ImageView imageView) {
         // if we have a thumbnail url, use it and be done
-        if (!TextUtils.isEmpty(media.getThumbnailUrl())) {
+        if (!TextUtils.isEmpty(media.getThumbnailUrl()) && !MediaUtils.isVideo(media.getThumbnailUrl())) {
             mImageManager.load(imageView, ImageType.VIDEO, media.getThumbnailUrl(), ScaleType.CENTER_CROP);
             return;
         }
@@ -469,7 +471,7 @@ public class MediaGridAdapter extends RecyclerView.Adapter<MediaGridAdapter.Grid
                             if (imageView.getTag(R.id.media_grid_file_path_id) instanceof String
                                 && (imageView.getTag(R.id.media_grid_file_path_id)).equals(filePath)) {
                                 imageView.setTag(R.id.media_grid_file_path_id, null);
-                                mImageManager.load(imageView, thumb, ScaleType.CENTER_CROP);
+                                notifyItemChanged(position);
                             }
                         }
                     });

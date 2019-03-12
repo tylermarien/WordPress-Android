@@ -2,10 +2,13 @@ package org.wordpress.android;
 
 import android.app.Activity;
 import android.app.Application;
-import android.app.Dialog;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.arch.lifecycle.Lifecycle;
+import android.arch.lifecycle.LifecycleObserver;
+import android.arch.lifecycle.OnLifecycleEvent;
+import android.arch.lifecycle.ProcessLifecycleOwner;
 import android.content.ComponentCallbacks2;
 import android.content.Context;
 import android.content.Intent;
@@ -20,17 +23,15 @@ import android.os.SystemClock;
 import android.preference.PreferenceManager;
 import android.support.annotation.Nullable;
 import android.support.multidex.MultiDexApplication;
+import android.support.v4.app.Fragment;
 import android.support.v7.app.AppCompatDelegate;
 import android.text.TextUtils;
 import android.util.AndroidRuntimeException;
 import android.webkit.WebSettings;
-import android.webkit.WebView;
 
 import com.android.volley.RequestQueue;
 import com.crashlytics.android.Crashlytics;
 import com.google.android.gms.auth.api.Auth;
-import com.google.android.gms.common.ConnectionResult;
-import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.firebase.iid.FirebaseInstanceId;
 import com.wordpress.rest.RestClient;
@@ -46,6 +47,8 @@ import org.wordpress.android.datasets.ReaderDatabase;
 import org.wordpress.android.fluxc.Dispatcher;
 import org.wordpress.android.fluxc.action.AccountAction;
 import org.wordpress.android.fluxc.generated.AccountActionBuilder;
+import org.wordpress.android.fluxc.generated.ListActionBuilder;
+import org.wordpress.android.fluxc.generated.PostActionBuilder;
 import org.wordpress.android.fluxc.generated.SiteActionBuilder;
 import org.wordpress.android.fluxc.generated.ThemeActionBuilder;
 import org.wordpress.android.fluxc.model.SiteModel;
@@ -53,6 +56,7 @@ import org.wordpress.android.fluxc.persistence.WellSqlConfig;
 import org.wordpress.android.fluxc.store.AccountStore;
 import org.wordpress.android.fluxc.store.AccountStore.OnAccountChanged;
 import org.wordpress.android.fluxc.store.AccountStore.OnAuthenticationChanged;
+import org.wordpress.android.fluxc.store.ListStore.RemoveExpiredListsPayload;
 import org.wordpress.android.fluxc.store.MediaStore;
 import org.wordpress.android.fluxc.store.SiteStore;
 import org.wordpress.android.fluxc.tools.FluxCImageLoader;
@@ -65,7 +69,6 @@ import org.wordpress.android.networking.RestClientUtils;
 import org.wordpress.android.push.GCMRegistrationIntentService;
 import org.wordpress.android.support.ZendeskHelper;
 import org.wordpress.android.ui.ActivityId;
-import org.wordpress.android.ui.notifications.NotificationsListFragment;
 import org.wordpress.android.ui.notifications.services.NotificationsUpdateServiceStarter;
 import org.wordpress.android.ui.notifications.utils.NotificationsUtils;
 import org.wordpress.android.ui.prefs.AppPrefs;
@@ -73,7 +76,8 @@ import org.wordpress.android.ui.stats.StatsWidgetProvider;
 import org.wordpress.android.ui.stats.datasets.StatsDatabaseHelper;
 import org.wordpress.android.ui.stats.datasets.StatsTable;
 import org.wordpress.android.ui.uploads.UploadService;
-import org.wordpress.android.util.AnalyticsUtils;
+import org.wordpress.android.util.QuickStartUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.AppLogListener;
 import org.wordpress.android.util.AppLog.LogLevel;
@@ -88,8 +92,6 @@ import org.wordpress.android.util.PackageUtils;
 import org.wordpress.android.util.ProfilingUtils;
 import org.wordpress.android.util.RateLimitedTask;
 import org.wordpress.android.util.VolleyUtils;
-import org.wordpress.passcodelock.AbstractAppLock;
-import org.wordpress.passcodelock.AppLockManager;
 
 import java.io.File;
 import java.io.IOException;
@@ -97,8 +99,6 @@ import java.lang.reflect.Field;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Timer;
-import java.util.TimerTask;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -106,10 +106,12 @@ import javax.inject.Named;
 import dagger.android.AndroidInjector;
 import dagger.android.DispatchingAndroidInjector;
 import dagger.android.HasServiceInjector;
+import dagger.android.support.HasSupportFragmentInjector;
 import de.greenrobot.event.EventBus;
 import io.fabric.sdk.android.Fabric;
 
-public class WordPress extends MultiDexApplication implements HasServiceInjector {
+public class WordPress extends MultiDexApplication implements HasServiceInjector, HasSupportFragmentInjector,
+        LifecycleObserver {
     public static final String SITE = "SITE";
     public static String versionName;
     public static WordPressDB wpDB;
@@ -127,10 +129,12 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
 
     private static Context mContext;
     private static BitmapLruCache mBitmapCache;
+    private static ApplicationLifecycleMonitor mApplicationLifecycleMonitor;
 
     private static GoogleApiClient mCredentialsClient;
 
     @Inject DispatchingAndroidInjector<Service> mServiceDispatchingAndroidInjector;
+    @Inject DispatchingAndroidInjector<Fragment> mSupportFragmentInjector;
 
     @Inject Dispatcher mDispatcher;
     @Inject AccountStore mAccountStore;
@@ -263,29 +267,19 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
 
         RestClientUtils.setUserAgent(getUserAgent());
 
-        // PasscodeLock setup
-        if (!AppLockManager.getInstance().isAppLockFeatureEnabled()) {
-            // Make sure that PasscodeLock isn't already in place.
-            // Notifications services can enable it before the app is started.
-            AppLockManager.getInstance().enableDefaultAppLockIfAvailable(this);
-        }
-        if (AppLockManager.getInstance().isAppLockFeatureEnabled()) {
-            AppLockManager.getInstance().getAppLock().setExemptActivities(
-                    new String[]{"org.wordpress.android.ui.ShareIntentReceiverActivity"});
-        }
-
         mZendeskHelper.setupZendesk(this, BuildConfig.ZENDESK_DOMAIN, BuildConfig.ZENDESK_APP_ID,
                 BuildConfig.ZENDESK_OAUTH_CLIENT_ID);
 
-        ApplicationLifecycleMonitor applicationLifecycleMonitor = new ApplicationLifecycleMonitor();
-        registerComponentCallbacks(applicationLifecycleMonitor);
-        registerActivityLifecycleCallbacks(applicationLifecycleMonitor);
+        MemoryAndConfigChangeMonitor memoryAndConfigChangeMonitor = new MemoryAndConfigChangeMonitor();
+        registerComponentCallbacks(memoryAndConfigChangeMonitor);
+
+        // initialize our ApplicationLifecycleMonitor, which is the App's LifecycleObserver implementation
+        mApplicationLifecycleMonitor = new ApplicationLifecycleMonitor();
+        ProcessLifecycleOwner.get().getLifecycle().addObserver(this);
 
         initAnalytics(SystemClock.elapsedRealtime() - startDate);
 
         createNotificationChannelsOnSdk26();
-
-        disableRtlLayoutDirectionOnSdk17();
 
         // Allows vector drawable from resources (in selectors for instance) on Android < 21 (can cause issues
         // with memory usage and the use of Configuration). More informations: http://bit.ly/2H1KTQo
@@ -294,6 +288,9 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
 
         // verify media is sanitized
         sanitizeMediaUploadStateForSite();
+
+        // remove expired lists
+        mDispatcher.dispatch(ListActionBuilder.newRemoveExpiredListsAction(new RemoveExpiredListsPayload()));
 
         // setup the Credentials Client so we can clean it up on wpcom logout
         mCredentialsClient = new GoogleApiClient.Builder(this)
@@ -315,12 +312,6 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
         mAppComponent = DaggerAppComponent.builder()
                                           .application(this)
                                           .build();
-    }
-
-    private void disableRtlLayoutDirectionOnSdk17() {
-        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            getResources().getConfiguration().setLayoutDirection(null);
-        }
     }
 
     private void sanitizeMediaUploadStateForSite() {
@@ -357,6 +348,14 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
             // Register the channel with the system; you can't change the importance
             // or other notification behaviors after this
             notificationManager.createNotificationChannel(importantChannel);
+
+            // Create the REMINDER channel (used for various reminders, like Quick Start, etc.)
+            NotificationChannel reminderChannel = new NotificationChannel(
+                    getString(R.string.notification_channel_reminder_id),
+                    getString(R.string.notification_channel_reminder_title), NotificationManager.IMPORTANCE_LOW);
+            // Register the channel with the system; you can't change the importance
+            // or other notification behaviors after this
+            notificationManager.createNotificationChannel(reminderChannel);
 
             // Create the TRANSIENT channel (used for short-lived notifications such as processing a Like/Approve,
             // or media upload)
@@ -403,14 +402,8 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
      * This deferredInit method is called when a user starts an activity for the first time, ie. when he sees a
      * screen for the first time. This allows us to have heavy calls on first activity startup instead of app startup.
      */
-    public void deferredInit(Activity activity) {
+    public void deferredInit() {
         AppLog.i(T.UTILS, "Deferred Initialisation");
-
-        if (isGooglePlayServicesAvailable(activity)) {
-            // Register for Cloud messaging
-            GCMRegistrationIntentService.enqueueWork(activity,
-                    new Intent(activity, GCMRegistrationIntentService.class));
-        }
 
         // Refresh account informations
         if (mAccountStore.hasAccessToken()) {
@@ -489,30 +482,6 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
         return sRestClientUtilsVersion0;
     }
 
-    public boolean isGooglePlayServicesAvailable(Activity activity) {
-        GoogleApiAvailability googleApiAvailability = GoogleApiAvailability.getInstance();
-        int connectionResult = googleApiAvailability.isGooglePlayServicesAvailable(activity);
-        switch (connectionResult) {
-            // Success: return true
-            case ConnectionResult.SUCCESS:
-                return true;
-            // Play Services unavailable, show an error dialog is the Play Services Lib needs an update
-            case ConnectionResult.SERVICE_VERSION_UPDATE_REQUIRED:
-                Dialog dialog = googleApiAvailability.getErrorDialog(activity, connectionResult, 0);
-                if (dialog != null) {
-                    dialog.show();
-                }
-                // fall through
-            default:
-            case ConnectionResult.SERVICE_MISSING:
-            case ConnectionResult.SERVICE_DISABLED:
-            case ConnectionResult.SERVICE_INVALID:
-                AppLog.w(T.NOTIFS, "Google Play Services unavailable, connection result: "
-                                   + googleApiAvailability.getErrorString(connectionResult));
-        }
-        return false;
-    }
-
     /**
      * Sign out from wpcom account.
      * Note: This method must not be called on UI Thread.
@@ -526,6 +495,9 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
         if (mCredentialsClient != null && mCredentialsClient.isConnected()) {
             Auth.CredentialsApi.disableAutoSignIn(mCredentialsClient);
         }
+
+        // Once fully logged out refresh the metadata so the user information doesn't persist for logged out events
+        AnalyticsUtils.refreshMetadata(mAccountStore, mSiteStore);
     }
 
     @SuppressWarnings("unused")
@@ -537,12 +509,6 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
             // Analytics resets
             AnalyticsTracker.endSession(false);
             AnalyticsTracker.clearAllData();
-
-            // disable passcode lock
-            AbstractAppLock appLock = AppLockManager.getInstance().getAppLock();
-            if (appLock != null) {
-                appLock.setPassword(null);
-            }
         }
 
         if (!event.isError() && mAccountStore.hasAccessToken()) {
@@ -605,6 +571,10 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
         }
         // delete wpcom and jetpack sites
         mDispatcher.dispatch(SiteActionBuilder.newRemoveWpcomAndJetpackSitesAction());
+        // remove all lists
+        mDispatcher.dispatch(ListActionBuilder.newRemoveAllListsAction());
+        // remove all posts
+        mDispatcher.dispatch(PostActionBuilder.newRemoveAllPostsAction());
 
         // reset all user prefs
         AppPrefs.reset();
@@ -618,7 +588,12 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
 
         // Reset Notifications Data
         NotificationsTable.reset();
+
+        // Cancel QuickStart reminders
+        QuickStartUtils.cancelQuickStartReminder(context);
     }
+
+    private static String mDefaultUserAgent;
 
     /**
      * Device's default User-Agent string.
@@ -627,21 +602,17 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
      * AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/44.0.2403.119 Mobile
      * Safari/537.36"
      */
-    private static String mDefaultUserAgent;
-
     public static String getDefaultUserAgent() {
         if (mDefaultUserAgent == null) {
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-                    mDefaultUserAgent = WebSettings.getDefaultUserAgent(getContext());
-                } else {
-                    mDefaultUserAgent = new WebView(getContext()).getSettings().getUserAgentString();
-                }
-            } catch (AndroidRuntimeException | NullPointerException e) {
+                mDefaultUserAgent = WebSettings.getDefaultUserAgent(getContext());
+            } catch (AndroidRuntimeException | NullPointerException | IllegalArgumentException e) {
                 // Catch AndroidRuntimeException that could be raised by the WebView() constructor.
                 // See https://github.com/wordpress-mobile/WordPress-Android/issues/3594
                 // Catch NullPointerException that could be raised by WebSettings.getDefaultUserAgent()
                 // See https://github.com/wordpress-mobile/WordPress-Android/issues/3838
+                // Catch IllegalArgumentException that could be raised by WebSettings.getDefaultUserAgent()
+                // See https://github.com/wordpress-mobile/WordPress-Android/issues/9015
 
                 // init with the empty string, it's a rare issue
                 mDefaultUserAgent = "";
@@ -649,6 +620,10 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
         }
         return mDefaultUserAgent;
     }
+
+
+    public static final String USER_AGENT_APPNAME = "wp-android";
+    private static String mUserAgent;
 
     /**
      * User-Agent string when making HTTP connections, for both API traffic and WebViews.
@@ -659,9 +634,6 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
      * Safari/537.36 wp-android/4.7"
      * Note that app versions prior to 2.7 simply used "wp-android" as the user agent
      **/
-    public static final String USER_AGENT_APPNAME = "wp-android";
-    private static String mUserAgent;
-
     public static String getUserAgent() {
         if (mUserAgent == null) {
             String defaultUserAgent = getDefaultUserAgent();
@@ -744,27 +716,143 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
         return mServiceDispatchingAndroidInjector;
     }
 
-    /**
-     * Detect when the app goes to the background and come back to the foreground.
-     * <p>
-     * Turns out that when your app has no more visible UI, a callback is triggered.
-     * The callback, implemented in this custom class, is called ComponentCallbacks2 (yes, with a two).
-     * <p>
-     * This class also uses ActivityLifecycleCallbacks and a timer used as guard,
-     * to make sure to detect the send to background event and not other events.
-     */
-    private class ApplicationLifecycleMonitor implements Application.ActivityLifecycleCallbacks, ComponentCallbacks2 {
+    @Override public AndroidInjector<Fragment> supportFragmentInjector() {
+        return mSupportFragmentInjector;
+    }
+
+    @OnLifecycleEvent(Lifecycle.Event.ON_START)
+    void onAppComesFromBackground() {
+        mApplicationLifecycleMonitor.onAppComesFromBackground();
+    }
+
+    @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
+    void onAppGoesToBackground() {
+        mApplicationLifecycleMonitor.onAppGoesToBackground();
+    }
+
+    private class ApplicationLifecycleMonitor {
         private static final int DEFAULT_TIMEOUT = 2 * 60; // 2 minutes
-        private static final long MAX_ACTIVITY_TRANSITION_TIME_MS = 2000;
 
         private Date mLastPingDate;
         private Date mApplicationOpenedDate;
-        private Timer mActivityTransitionTimer;
-        private TimerTask mActivityTransitionTimerTask;
         private boolean mConnectionReceiverRegistered;
 
         boolean mFirstActivityResumed = true;
 
+        private boolean isPushNotificationPingNeeded() {
+            if (mLastPingDate == null) {
+                // first startup
+                return false;
+            }
+
+            Date now = new Date();
+            if (DateTimeUtils.secondsBetween(now, mLastPingDate) >= DEFAULT_TIMEOUT) {
+                mLastPingDate = now;
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * Check if user has valid credentials, and that at least 2 minutes are passed
+         * since the last ping, then try to update the PN token.
+         */
+        private void updatePushNotificationTokenIfNotLimited() {
+            // Synch Push Notifications settings
+            if (isPushNotificationPingNeeded() && mAccountStore.hasAccessToken()) {
+                // Register for Cloud messaging
+                GCMRegistrationIntentService.enqueueWork(getContext(),
+                        new Intent(getContext(), GCMRegistrationIntentService.class));
+            }
+        }
+
+        public void onAppGoesToBackground() {
+            AppLog.i(T.UTILS, "App goes to background");
+            if (sAppIsInTheBackground) {
+                return;
+            }
+            sAppIsInTheBackground = true;
+            String lastActivityString = AppPrefs.getLastActivityStr();
+            ActivityId lastActivity = ActivityId.getActivityIdFromName(lastActivityString);
+            Map<String, Object> properties = new HashMap<String, Object>();
+            properties.put("last_visible_screen", lastActivity.toString());
+            if (mApplicationOpenedDate != null) {
+                Date now = new Date();
+                properties.put("time_in_app", DateTimeUtils.secondsBetween(now, mApplicationOpenedDate));
+                mApplicationOpenedDate = null;
+            }
+            AnalyticsTracker.track(AnalyticsTracker.Stat.APPLICATION_CLOSED, properties);
+            AnalyticsTracker.endSession(false);
+            // Methods onAppComesFromBackground / onAppGoesToBackground are only workarounds to track when the
+            // app goes to or comes from background, but they are not 100% reliable, we should avoid unregistering
+            // the receiver twice.
+            if (mConnectionReceiverRegistered) {
+                mConnectionReceiverRegistered = false;
+                try {
+                    unregisterReceiver(ConnectionChangeReceiver.getInstance());
+                    AppLog.d(T.MAIN, "ConnectionChangeReceiver successfully unregistered");
+                } catch (IllegalArgumentException e) {
+                    AppLog.e(T.MAIN, "ConnectionChangeReceiver was already unregistered");
+                    Crashlytics.logException(e);
+                }
+            }
+        }
+
+        /**
+         * This method is called when:
+         * 1. the app starts (but it's not opened by a service or a broadcast receiver, i.e. an activity is resumed)
+         * 2. the app was in background and is now foreground
+         */
+        public void onAppComesFromBackground() {
+            AppLog.i(T.UTILS, "App comes from background");
+            if (!sAppIsInTheBackground) {
+                return;
+            }
+            sAppIsInTheBackground = false;
+
+            // https://developer.android.com/reference/android/net/ConnectivityManager.html
+            // Apps targeting Android 7.0 (API level 24) and higher do not receive this broadcast if they
+            // declare the broadcast receiver in their manifest. Apps will still receive broadcasts if they
+            // register their BroadcastReceiver with Context.registerReceiver() and that context is still valid.
+            if (!mConnectionReceiverRegistered) {
+                mConnectionReceiverRegistered = true;
+                registerReceiver(ConnectionChangeReceiver.getInstance(),
+                        new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+            }
+            AnalyticsUtils.refreshMetadata(mAccountStore, mSiteStore);
+            mApplicationOpenedDate = new Date();
+            AnalyticsTracker.track(Stat.APPLICATION_OPENED);
+            if (NetworkUtils.isNetworkAvailable(mContext)) {
+                // Refresh account informations and Notifications
+                if (mAccountStore.hasAccessToken()) {
+                    NotificationsUpdateServiceStarter.startService(getContext());
+                }
+
+                // verify media is sanitized
+                sanitizeMediaUploadStateForSite();
+
+                // Rate limited PN Token Update
+                updatePushNotificationTokenIfNotLimited();
+
+                // Rate limited WPCom blog list update
+                mUpdateSiteList.runIfNotLimited();
+
+                // Rate limited Site informations and options update
+                mUpdateSelectedSite.runIfNotLimited();
+            }
+            sDeleteExpiredStats.runIfNotLimited();
+
+            if (mFirstActivityResumed) {
+                deferredInit();
+            }
+            mFirstActivityResumed = false;
+        }
+    }
+
+    /**
+     * Uses ComponentCallbacks2 is used for memory-related event handling and configuration changes
+     */
+    private class MemoryAndConfigChangeMonitor implements ComponentCallbacks2 {
         @Override
         public void onConfigurationChanged(final Configuration newConfig) {
             // Reapply locale on configuration change
@@ -795,202 +883,6 @@ public class WordPress extends MultiDexApplication implements HasServiceInjector
             if (evictBitmaps && mBitmapCache != null) {
                 mBitmapCache.evictAll();
             }
-        }
-
-        private boolean isPushNotificationPingNeeded() {
-            if (mLastPingDate == null) {
-                // first startup
-                return false;
-            }
-
-            Date now = new Date();
-            if (DateTimeUtils.secondsBetween(now, mLastPingDate) >= DEFAULT_TIMEOUT) {
-                mLastPingDate = now;
-                return true;
-            }
-            return false;
-        }
-
-        /**
-         * Check if user has valid credentials, and that at least 2 minutes are passed
-         * since the last ping, then try to update the PN token.
-         */
-        private void updatePushNotificationTokenIfNotLimited() {
-            // Synch Push Notifications settings
-            if (isPushNotificationPingNeeded() && mAccountStore.hasAccessToken()) {
-                // Register for Cloud messaging
-                GCMRegistrationIntentService.enqueueWork(getContext(),
-                        new Intent(getContext(), GCMRegistrationIntentService.class));
-            }
-        }
-
-        /**
-         * The two methods below (startActivityTransitionTimer and stopActivityTransitionTimer)
-         * are used to track when the app goes to background.
-         * <p>
-         * Our implementation uses `onActivityPaused` and `onActivityResumed` of ApplicationLifecycleMonitor
-         * to start and stop the timer that detects when the app goes to background.
-         * <p>
-         * So when the user is simply navigating between the activities, the onActivityPaused()
-         * calls `startActivityTransitionTimer` and starts the timer, but almost immediately the new activity being
-         * entered, the ApplicationLifecycleMonitor cancels the timer in its onActivityResumed method, that in order
-         * calls `stopActivityTransitionTimer` and so mIsInBackground would be false.
-         * <p>
-         * In the case the app is sent to background, the TimerTask is instead executed, and the code that handles all
-         * the background logic is run.
-         */
-        private void startActivityTransitionTimer() {
-            this.mActivityTransitionTimer = new Timer();
-            this.mActivityTransitionTimerTask = new TimerTask() {
-                public void run() {
-                    onAppGoesToBackground();
-                }
-            };
-
-            this.mActivityTransitionTimer.schedule(mActivityTransitionTimerTask,
-                                                   MAX_ACTIVITY_TRANSITION_TIME_MS);
-        }
-
-        private void onAppGoesToBackground() {
-            AppLog.i(T.UTILS, "App goes to background");
-            sAppIsInTheBackground = true;
-            String lastActivityString = AppPrefs.getLastActivityStr();
-            ActivityId lastActivity = ActivityId.getActivityIdFromName(lastActivityString);
-            Map<String, Object> properties = new HashMap<String, Object>();
-            properties.put("last_visible_screen", lastActivity.toString());
-            if (mApplicationOpenedDate != null) {
-                Date now = new Date();
-                properties.put("time_in_app", DateTimeUtils.secondsBetween(now, mApplicationOpenedDate));
-                mApplicationOpenedDate = null;
-            }
-            AnalyticsTracker.track(AnalyticsTracker.Stat.APPLICATION_CLOSED, properties);
-            AnalyticsTracker.endSession(false);
-            // Methods onAppComesFromBackground / onAppGoesToBackground are only workarounds to track when the
-            // app goes to or comes from background, but they are not 100% reliable, we should avoid unregistering
-            // the receiver twice.
-            if (mConnectionReceiverRegistered) {
-                mConnectionReceiverRegistered = false;
-                try {
-                    unregisterReceiver(ConnectionChangeReceiver.getInstance());
-                    AppLog.d(T.MAIN, "ConnectionChangeReceiver successfully unregistered");
-                } catch (IllegalArgumentException e) {
-                    AppLog.e(T.MAIN, "ConnectionChangeReceiver was already unregistered");
-                    Crashlytics.logException(e);
-                }
-            }
-        }
-
-        private void stopActivityTransitionTimer() {
-            if (this.mActivityTransitionTimerTask != null) {
-                this.mActivityTransitionTimerTask.cancel();
-            }
-
-            if (this.mActivityTransitionTimer != null) {
-                this.mActivityTransitionTimer.cancel();
-            }
-
-            sAppIsInTheBackground = false;
-        }
-
-        /**
-         * This method is called when:
-         * 1. the app starts (but it's not opened by a service or a broadcast receiver, i.e. an activity is resumed)
-         * 2. the app was in background and is now foreground
-         */
-        private void onAppComesFromBackground(Activity activity) {
-            AppLog.i(T.UTILS, "App comes from background");
-            // https://developer.android.com/reference/android/net/ConnectivityManager.html
-            // Apps targeting Android 7.0 (API level 24) and higher do not receive this broadcast if they
-            // declare the broadcast receiver in their manifest. Apps will still receive broadcasts if they
-            // register their BroadcastReceiver with Context.registerReceiver() and that context is still valid.
-            if (!mConnectionReceiverRegistered) {
-                mConnectionReceiverRegistered = true;
-                registerReceiver(ConnectionChangeReceiver.getInstance(),
-                                 new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
-            }
-            AnalyticsUtils.refreshMetadata(mAccountStore, mSiteStore);
-            mApplicationOpenedDate = new Date();
-            Map<String, Boolean> properties = new HashMap<>(1);
-            properties.put("pin_lock_enabled", AppLockManager.getInstance().getAppLock() != null
-                                               && AppLockManager.getInstance().getAppLock().isPasswordLocked());
-            AnalyticsTracker.track(Stat.APPLICATION_OPENED, properties);
-            if (NetworkUtils.isNetworkAvailable(mContext)) {
-                // Refresh account informations and Notifications
-                if (mAccountStore.hasAccessToken()) {
-                    Intent intent = activity.getIntent();
-                    if (intent != null && intent.hasExtra(NotificationsListFragment.NOTE_ID_EXTRA)) {
-                        NotificationsUpdateServiceStarter.startService(getContext(),
-                                                                getNoteIdFromNoteDetailActivityIntent(
-                                                                        activity.getIntent()));
-                    } else {
-                        NotificationsUpdateServiceStarter.startService(getContext());
-                    }
-                }
-
-                // verify media is sanitized
-                sanitizeMediaUploadStateForSite();
-
-                // Rate limited PN Token Update
-                updatePushNotificationTokenIfNotLimited();
-
-                // Rate limited WPCom blog list update
-                mUpdateSiteList.runIfNotLimited();
-
-                // Rate limited Site informations and options update
-                mUpdateSelectedSite.runIfNotLimited();
-            }
-            sDeleteExpiredStats.runIfNotLimited();
-        }
-
-        // gets the note id from the extras that started this activity, so
-        // we can remember to re-set that to unread once the note fetch update takes place
-        private String getNoteIdFromNoteDetailActivityIntent(Intent intent) {
-            String noteId = "";
-            if (intent != null) {
-                noteId = intent.getStringExtra(NotificationsListFragment.NOTE_ID_EXTRA);
-            }
-            return noteId;
-        }
-
-        @Override
-        public void onActivityResumed(Activity activity) {
-            if (sAppIsInTheBackground) {
-                // was in background before
-                onAppComesFromBackground(activity);
-            }
-            stopActivityTransitionTimer();
-
-            sAppIsInTheBackground = false;
-            if (mFirstActivityResumed) {
-                deferredInit(activity);
-            }
-            mFirstActivityResumed = false;
-        }
-
-        @Override
-        public void onActivityCreated(Activity arg0, Bundle arg1) {
-        }
-
-        @Override
-        public void onActivityDestroyed(Activity arg0) {
-        }
-
-        @Override
-        public void onActivityPaused(Activity arg0) {
-            mLastPingDate = new Date();
-            startActivityTransitionTimer();
-        }
-
-        @Override
-        public void onActivitySaveInstanceState(Activity arg0, Bundle arg1) {
-        }
-
-        @Override
-        public void onActivityStarted(Activity arg0) {
-        }
-
-        @Override
-        public void onActivityStopped(Activity arg0) {
         }
     }
 }

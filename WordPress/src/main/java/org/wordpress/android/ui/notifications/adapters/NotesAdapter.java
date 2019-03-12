@@ -14,11 +14,13 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import org.wordpress.android.R;
+import org.wordpress.android.WordPress;
 import org.wordpress.android.datasets.NotificationsTable;
 import org.wordpress.android.fluxc.model.CommentStatus;
 import org.wordpress.android.models.Note;
 import org.wordpress.android.ui.comments.CommentUtils;
 import org.wordpress.android.ui.notifications.NotificationsListFragment;
+import org.wordpress.android.ui.notifications.utils.NotificationsUtilsWrapper;
 import org.wordpress.android.util.GravatarUtils;
 import org.wordpress.android.util.RtlUtils;
 import org.wordpress.android.util.image.ImageManager;
@@ -28,6 +30,8 @@ import org.wordpress.android.widgets.NoticonTextView;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
+import javax.inject.Inject;
 
 public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHolder> {
     private final int mAvatarSz;
@@ -39,11 +43,32 @@ public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHold
     private final OnLoadMoreListener mOnLoadMoreListener;
     private final ArrayList<Note> mNotes = new ArrayList<>();
     private final ArrayList<Note> mFilteredNotes = new ArrayList<>();
-    private final ImageManager mImageManager;
+    @Inject protected ImageManager mImageManager;
+    @Inject protected NotificationsUtilsWrapper mNotificationsUtilsWrapper;
 
     public enum FILTERS {
-        FILTER_ALL, FILTER_LIKE, FILTER_COMMENT, FILTER_UNREAD,
-        FILTER_FOLLOW
+        FILTER_ALL,
+        FILTER_COMMENT,
+        FILTER_FOLLOW,
+        FILTER_LIKE,
+        FILTER_UNREAD;
+
+        public String toString() {
+            switch (this) {
+                case FILTER_ALL:
+                    return "all";
+                case FILTER_COMMENT:
+                    return "comment";
+                case FILTER_FOLLOW:
+                    return "follow";
+                case FILTER_LIKE:
+                    return "like";
+                case FILTER_UNREAD:
+                    return "unread";
+                default:
+                    return "all";
+            }
+        }
     }
 
     private FILTERS mCurrentFilter = FILTERS.FILTER_ALL;
@@ -58,15 +83,17 @@ public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHold
 
     private NotificationsListFragment.OnNoteClickListener mOnNoteClickListener;
 
-    public NotesAdapter(Context context, DataLoadedListener dataLoadedListener, OnLoadMoreListener onLoadMoreListener,
-                        ImageManager imageManager) {
+    public NotesAdapter(Context context, DataLoadedListener dataLoadedListener, OnLoadMoreListener onLoadMoreListener) {
         super();
-
-        mImageManager = imageManager;
+        ((WordPress) context.getApplicationContext()).component().inject(this);
         mDataLoadedListener = dataLoadedListener;
         mOnLoadMoreListener = onLoadMoreListener;
 
-        setHasStableIds(true);
+        // this is on purpose - we don't show more than a hundred or so notifications at a time so no need to set
+        // stable IDs. This helps prevent crashes in case a note comes with no ID (we've code checking for that
+        // elsewhere, but telling the RecyclerView.Adapter the notes have stable Ids and then failing to provide them
+        // will make things go south as in https://github.com/wordpress-mobile/WordPress-Android/issues/8741
+        setHasStableIds(false);
 
         mAvatarSz = (int) context.getResources().getDimension(R.dimen.notifications_avatar_sz);
         mColorRead = context.getResources().getColor(R.color.white);
@@ -171,22 +198,12 @@ public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHold
     }
 
     @Override
-    public long getItemId(int position) {
-        Note note = getNoteAtPosition(position);
-        if (note == null) {
-            return 0;
-        }
-
-        return Long.valueOf(note.getId());
-    }
-
-    @Override
     public void onBindViewHolder(NoteViewHolder noteViewHolder, int position) {
         final Note note = getNoteAtPosition(position);
         if (note == null) {
             return;
         }
-        noteViewHolder.itemView.setTag(note.getId());
+        noteViewHolder.mContentView.setTag(note.getId());
 
         // Display group header
         Note.NoteTimeGroup timeGroup = Note.getTimeGroupForTimestamp(note.getTimestamp());
@@ -198,8 +215,10 @@ public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHold
         }
 
         if (previousTimeGroup != null && previousTimeGroup == timeGroup) {
-            noteViewHolder.mHeaderView.setVisibility(View.GONE);
+            noteViewHolder.mHeaderText.setVisibility(View.GONE);
         } else {
+            noteViewHolder.mHeaderText.setVisibility(View.VISIBLE);
+
             if (timeGroup == Note.NoteTimeGroup.GROUP_TODAY) {
                 noteViewHolder.mHeaderText.setText(R.string.stats_timeframe_today);
             } else if (timeGroup == Note.NoteTimeGroup.GROUP_YESTERDAY) {
@@ -211,8 +230,6 @@ public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHold
             } else {
                 noteViewHolder.mHeaderText.setText(R.string.older_month);
             }
-
-            noteViewHolder.mHeaderView.setVisibility(View.VISIBLE);
         }
 
         CommentStatus commentStatus = CommentStatus.ALL;
@@ -225,7 +242,7 @@ public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHold
         }
 
         // Subject is stored in db as html to preserve text formatting
-        CharSequence noteSubjectSpanned = note.getFormattedSubject();
+        CharSequence noteSubjectSpanned = note.getFormattedSubject(mNotificationsUtilsWrapper);
         // Trim the '\n\n' added by Html.fromHtml()
         noteSubjectSpanned = noteSubjectSpanned.subSequence(0, TextUtils.getTrimmedLength(noteSubjectSpanned));
         noteViewHolder.mTxtSubject.setText(noteSubjectSpanned);
@@ -261,7 +278,7 @@ public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHold
         }
 
         String avatarUrl = GravatarUtils.fixGravatarUrl(note.getIconURL(), mAvatarSz);
-        mImageManager.loadIntoCircle(noteViewHolder.mImgAvatar, ImageType.AVATAR, avatarUrl);
+        mImageManager.loadIntoCircle(noteViewHolder.mImgAvatar, ImageType.AVATAR_WITH_BACKGROUND, avatarUrl);
 
         boolean isUnread = note.isUnread();
 
@@ -330,10 +347,8 @@ public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHold
     }
 
     class NoteViewHolder extends RecyclerView.ViewHolder {
-        private final View mHeaderView;
         private final View mContentView;
         private final TextView mHeaderText;
-
         private final TextView mTxtSubject;
         private final TextView mTxtSubjectNoticon;
         private final TextView mTxtDetail;
@@ -342,16 +357,15 @@ public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHold
 
         NoteViewHolder(View view) {
             super(view);
-            mHeaderView = view.findViewById(R.id.time_header);
             mContentView = view.findViewById(R.id.note_content_container);
-            mHeaderText = view.findViewById(R.id.header_date_text);
+            mHeaderText = view.findViewById(R.id.header_text);
             mTxtSubject = view.findViewById(R.id.note_subject);
             mTxtSubjectNoticon = view.findViewById(R.id.note_subject_noticon);
             mTxtDetail = view.findViewById(R.id.note_detail);
             mImgAvatar = view.findViewById(R.id.note_avatar);
             mNoteIcon = view.findViewById(R.id.note_icon);
 
-            itemView.setOnClickListener(mOnClickListener);
+            mContentView.setOnClickListener(mOnClickListener);
         }
     }
 

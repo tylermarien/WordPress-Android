@@ -2,6 +2,7 @@ package org.wordpress.android.ui.posts
 
 import android.app.Dialog
 import android.content.Context
+import android.content.DialogInterface
 import android.os.Bundle
 import android.support.v7.app.AlertDialog.Builder
 import android.support.v7.app.AppCompatDialogFragment
@@ -13,11 +14,14 @@ import org.wordpress.android.R
  */
 class BasicFragmentDialog : AppCompatDialogFragment() {
     private lateinit var mTag: String
-    private lateinit var mTitle: String
     private lateinit var mMessage: String
     private lateinit var mPositiveButtonLabel: String
+    private var mTitle: String? = null
     private var mNegativeButtonLabel: String? = null
     private var mCancelButtonLabel: String? = null
+    private var dismissedByPositiveButton = false
+    private var dismissedByNegativeButton = false
+    private var dismissedByCancelButton = false
 
     interface BasicDialogPositiveClickInterface {
         fun onPositiveClicked(instanceTag: String)
@@ -27,9 +31,13 @@ class BasicFragmentDialog : AppCompatDialogFragment() {
         fun onNegativeClicked(instanceTag: String)
     }
 
+    interface BasicDialogOnDismissByOutsideTouchInterface {
+        fun onDismissByOutsideTouch(instanceTag: String)
+    }
+
     fun initialize(
         tag: String,
-        title: String,
+        title: String?,
         message: String,
         positiveButtonLabel: String,
         negativeButtonLabel: String? = null,
@@ -71,22 +79,30 @@ class BasicFragmentDialog : AppCompatDialogFragment() {
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val builder = Builder(ContextThemeWrapper(activity, R.style.Calypso_Dialog_Alert))
-        builder.setTitle(mTitle)
-                .setMessage(mMessage)
+        builder.setMessage(mMessage)
                 .setPositiveButton(mPositiveButtonLabel) { _, _ ->
+                    dismissedByPositiveButton = true
                     val activity = activity
                     if (activity != null) {
                         (activity as BasicDialogPositiveClickInterface).onPositiveClicked(mTag)
                     }
                 }.setCancelable(true)
 
+        mTitle?.let {
+            builder.setTitle(mTitle)
+        }
+
         mNegativeButtonLabel?.let {
             builder.setNegativeButton(mNegativeButtonLabel) { _, _ ->
+                dismissedByNegativeButton = true
                 val activity = activity
                 if (activity != null) {
                     (activity as BasicDialogNegativeClickInterface).onNegativeClicked(mTag)
                 }
             }
+        }
+        builder.setOnCancelListener {
+            dismissedByCancelButton = true
         }
 
         mCancelButtonLabel?.let {
@@ -105,6 +121,17 @@ class BasicFragmentDialog : AppCompatDialogFragment() {
         if (mNegativeButtonLabel != null && activity !is BasicDialogNegativeClickInterface) {
             throw RuntimeException("Hosting activity must implement BasicDialogNegativeClickInterface")
         }
+    }
+
+    override fun onDismiss(dialog: DialogInterface?) {
+        val activity = activity
+        if (activity != null && activity is BasicDialogOnDismissByOutsideTouchInterface) {
+            // Only handle the event if it wasn't triggered by a button
+            if (!dismissedByPositiveButton && !dismissedByNegativeButton && !dismissedByCancelButton) {
+                (activity as BasicDialogOnDismissByOutsideTouchInterface).onDismissByOutsideTouch(mTag)
+            }
+        }
+        super.onDismiss(dialog)
     }
 
     companion object {

@@ -1,18 +1,17 @@
 package org.wordpress.android.ui.main
 
-import android.annotation.SuppressLint
-import android.app.Fragment
-import android.app.FragmentManager
 import android.content.Context
 import android.support.annotation.DrawableRes
 import android.support.annotation.IdRes
 import android.support.annotation.StringRes
+import android.support.design.bottomnavigation.LabelVisibilityMode
 import android.support.design.internal.BottomNavigationItemView
 import android.support.design.internal.BottomNavigationMenuView
 import android.support.design.widget.BottomNavigationView
 import android.support.design.widget.BottomNavigationView.OnNavigationItemReselectedListener
 import android.support.design.widget.BottomNavigationView.OnNavigationItemSelectedListener
-import android.support.v4.content.ContextCompat
+import android.support.v4.app.Fragment
+import android.support.v4.app.FragmentManager
 import android.util.AttributeSet
 import android.util.SparseArray
 import android.view.LayoutInflater
@@ -28,8 +27,6 @@ import org.wordpress.android.ui.prefs.AppPrefs
 import org.wordpress.android.ui.reader.ReaderPostListFragment
 import org.wordpress.android.util.AniUtils
 import org.wordpress.android.util.AniUtils.Duration
-import org.wordpress.android.util.AppLog
-import org.wordpress.android.util.AppLog.T
 
 /*
  * Bottom navigation view and related adapter used by the main activity for the
@@ -77,6 +74,7 @@ class WPMainNavigationView @JvmOverloads constructor(
             if (i == PAGE_NEW_POST) {
                 itemView.background = null
                 customView = inflater.inflate(R.layout.navbar_post_item, menuView, false)
+                customView.id = R.id.bottom_nav_new_post_button // identify view for QuickStart
             } else {
                 customView = inflater.inflate(R.layout.navbar_item, menuView, false)
                 val txtLabel = customView.findViewById<TextView>(R.id.nav_label)
@@ -84,6 +82,9 @@ class WPMainNavigationView @JvmOverloads constructor(
                 txtLabel.text = getTitleForPosition(i)
                 customView.contentDescription = getContentDescriptionForPosition(i)
                 imgIcon.setImageResource(getDrawableResForPosition(i))
+                if (i == PAGE_READER) {
+                    customView.id = R.id.bottom_nav_reader_button // identify view for QuickStart
+                }
             }
 
             itemView.addView(customView)
@@ -92,30 +93,8 @@ class WPMainNavigationView @JvmOverloads constructor(
         currentPosition = AppPrefs.getMainPageIndex()
     }
 
-    /*
-     * uses reflection to disable "shift mode" so the item are equal width
-     */
-    @SuppressLint("RestrictedApi")
     private fun disableShiftMode() {
-        val menuView = getChildAt(0) as BottomNavigationMenuView
-        try {
-            menuView.javaClass.getDeclaredField("mShiftingMode").apply {
-                isAccessible = true
-                setBoolean(menuView, false)
-                isAccessible = false
-            }
-            for (i in 0 until menuView.childCount) {
-                (menuView.getChildAt(i) as BottomNavigationItemView).apply {
-                    setShiftingMode(false)
-                    // force the view to update
-                    setChecked(itemData.isChecked)
-                }
-            }
-        } catch (e: NoSuchFieldException) {
-            AppLog.e(T.MAIN, "Unable to disable shift mode", e)
-        } catch (e: IllegalAccessException) {
-            AppLog.e(T.MAIN, "Unable to disable shift mode", e)
-        }
+        labelVisibilityMode = LabelVisibilityMode.LABEL_VISIBILITY_LABELED
     }
 
     private fun assignNavigationListeners(assign: Boolean) {
@@ -220,24 +199,18 @@ class WPMainNavigationView @JvmOverloads constructor(
         }
     }
 
-    /*
-     * ideally we'd use a color selector to tint the icon based on its selected state, but prior to
-     * API 21 setting a color selector via XML will crash the app, and setting it programmatically
-     * will have no effect
-     */
     private fun setImageViewSelected(position: Int, isSelected: Boolean) {
-        val color = ContextCompat.getColor(context, if (isSelected) R.color.blue_medium else R.color.grey_lighten_10)
-        getImageViewForPosition(position)?.setColorFilter(color, android.graphics.PorterDuff.Mode.MULTIPLY)
+        getImageViewForPosition(position)?.isSelected = isSelected
     }
 
     @DrawableRes
     private fun getDrawableResForPosition(position: Int): Int {
         return when (position) {
-            PAGE_MY_SITE -> R.drawable.ic_my_sites_white_32dp
-            PAGE_READER -> R.drawable.ic_reader_white_32dp
+            PAGE_MY_SITE -> R.drawable.ic_my_sites_white_24dp
+            PAGE_READER -> R.drawable.ic_reader_white_24dp
             PAGE_NEW_POST -> R.drawable.ic_create_white_24dp
-            PAGE_ME -> R.drawable.ic_user_circle_white_32dp
-            else -> R.drawable.ic_bell_white_32dp
+            PAGE_ME -> R.drawable.ic_user_circle_white_24dp
+            else -> R.drawable.ic_bell_white_24dp
         }
     }
 
@@ -299,11 +272,19 @@ class WPMainNavigationView @JvmOverloads constructor(
         return null
     }
 
-    /*
-     * show or hide the badge on the notification page
-     */
+    fun showReaderBadge(showBadge: Boolean) {
+        showBadge(PAGE_READER, showBadge)
+    }
+
     fun showNoteBadge(showBadge: Boolean) {
-        val badgeView = getItemView(PAGE_NOTIFS)?.findViewById<View>(R.id.badge)
+        showBadge(PAGE_NOTIFS, showBadge)
+    }
+
+    /*
+     * show or hide the badge on the 'pageId' icon in the bottom bar
+     */
+    private fun showBadge(pageId: Int, showBadge: Boolean) {
+        val badgeView = getItemView(pageId)?.findViewById<View>(R.id.badge)
 
         val currentVisibility = badgeView?.visibility
         val newVisibility = if (showBadge) View.VISIBLE else View.GONE

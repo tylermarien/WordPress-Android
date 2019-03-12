@@ -30,7 +30,7 @@ import org.wordpress.android.ui.ActionableEmptyView;
 import org.wordpress.android.ui.media.MediaBrowserType;
 import org.wordpress.android.ui.photopicker.PhotoPickerAdapter.PhotoPickerAdapterListener;
 import org.wordpress.android.ui.prefs.EmptyViewRecyclerView;
-import org.wordpress.android.util.AnalyticsUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
 import org.wordpress.android.util.AniUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.DisplayUtils;
@@ -57,7 +57,8 @@ public class PhotoPickerFragment extends Fragment {
         ANDROID_CAPTURE_PHOTO,
         ANDROID_CAPTURE_VIDEO,
         WP_MEDIA,
-        STOCK_MEDIA
+        STOCK_MEDIA,
+        GIPHY
     }
 
     /*
@@ -221,7 +222,7 @@ public class PhotoPickerFragment extends Fragment {
 
         if (icon == PhotoPickerIcon.ANDROID_CAPTURE_PHOTO || icon == PhotoPickerIcon.ANDROID_CAPTURE_VIDEO) {
             if (ContextCompat.checkSelfPermission(
-                    getActivity(), permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                    getActivity(), permission.CAMERA) != PackageManager.PERMISSION_GRANTED || !hasStoragePermission()) {
                 requestCameraPermission();
                 return;
             }
@@ -242,6 +243,10 @@ public class PhotoPickerFragment extends Fragment {
                 break;
             case WP_MEDIA:
                 AnalyticsTracker.track(AnalyticsTracker.Stat.MEDIA_PICKER_OPEN_WP_MEDIA);
+                break;
+            case STOCK_MEDIA:
+                break;
+            case GIPHY:
                 break;
         }
 
@@ -279,6 +284,14 @@ public class PhotoPickerFragment extends Fragment {
                 @Override
                 public boolean onMenuItemClick(MenuItem item) {
                     doIconClicked(PhotoPickerIcon.STOCK_MEDIA);
+                    return true;
+                }
+            });
+
+            MenuItem itemGiphy = popup.getMenu().add(R.string.photo_picker_giphy);
+            itemGiphy.setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
+                @Override public boolean onMenuItemClick(MenuItem item) {
+                    doIconClicked(PhotoPickerIcon.GIPHY);
                     return true;
                 }
             });
@@ -506,9 +519,9 @@ public class PhotoPickerFragment extends Fragment {
     }
 
     private void requestCameraPermission() {
-        String[] permissions = new String[]{permission.CAMERA};
-        requestPermissions(
-                permissions, WPPermissionUtils.PHOTO_PICKER_CAMERA_PERMISSION_REQUEST_CODE);
+        // in addition to CAMERA permission we also need a storage permission, to store media from the camera
+        String[] permissions = new String[]{permission.CAMERA, permission.WRITE_EXTERNAL_STORAGE};
+        requestPermissions(permissions, WPPermissionUtils.PHOTO_PICKER_CAMERA_PERMISSION_REQUEST_CODE);
     }
 
     @Override

@@ -10,6 +10,7 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import org.wordpress.android.R;
+import org.wordpress.android.util.ColorUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -61,49 +62,46 @@ public class ReaderMenuAdapter extends BaseAdapter {
         }
 
         int textRes;
-        int textColorRes;
+        int colorRes;
         int iconRes;
         switch (mMenuItems.get(position)) {
             case ITEM_FOLLOW:
                 textRes = R.string.reader_btn_follow;
-                textColorRes = R.color.reader_follow;
-                iconRes = R.drawable.ic_reader_follow_blue_medium_24dp;
+                colorRes = R.color.reader_follow;
+                iconRes = R.drawable.ic_reader_follow_white_24dp;
                 break;
             case ITEM_UNFOLLOW:
                 textRes = R.string.reader_btn_unfollow;
-                textColorRes = R.color.reader_following;
-                iconRes = R.drawable.ic_reader_following_alert_green_24dp;
+                colorRes = R.color.reader_following;
+                iconRes = R.drawable.ic_reader_following_white_24dp;
                 break;
             case ITEM_BLOCK:
                 textRes = R.string.reader_menu_block_blog;
-                textColorRes = R.color.grey_dark;
-                iconRes = R.drawable.ic_block_grey_dark_24dp;
+                colorRes = R.color.grey_dark;
+                iconRes = R.drawable.ic_block_white_24dp;
                 break;
             case ITEM_NOTIFICATIONS_OFF:
                 textRes = R.string.reader_btn_notifications_off;
-                textColorRes = R.color.reader_notifications_off;
-                iconRes = R.drawable.ic_bell_alert_green_24dp;
+                colorRes = R.color.reader_notifications_off;
+                iconRes = R.drawable.ic_bell_white_24dp;
                 break;
             case ITEM_NOTIFICATIONS_ON:
                 textRes = R.string.reader_btn_notifications_on;
-                textColorRes = R.color.reader_notifications_on;
-                iconRes = R.drawable.ic_bell_grey_dark_24dp;
+                colorRes = R.color.reader_notifications_on;
+                iconRes = R.drawable.ic_bell_white_24dp;
                 break;
             case ITEM_SHARE:
                 textRes = R.string.reader_btn_share;
-                textColorRes = R.color.grey_dark;
-                iconRes = R.drawable.ic_share_grey_dark_24dp;
+                colorRes = R.color.grey_dark;
+                iconRes = R.drawable.ic_share_white_24dp;
                 break;
             default:
                 return convertView;
         }
 
         holder.mText.setText(textRes);
-        holder.mText.setTextColor(convertView.getContext().getResources().getColor(textColorRes));
-
-        if (iconRes != 0) {
-            holder.mIcon.setImageResource(iconRes);
-        }
+        holder.mText.setTextColor(convertView.getContext().getResources().getColor(colorRes));
+        ColorUtils.INSTANCE.setImageResourceWithTint(holder.mIcon, iconRes, colorRes);
 
         return convertView;
     }

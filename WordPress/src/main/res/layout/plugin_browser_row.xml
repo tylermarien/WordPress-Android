@@ -6,8 +6,6 @@
     android:background="?android:attr/selectableItemBackground"
     android:paddingBottom="@dimen/margin_small"
     android:paddingEnd="@dimen/margin_medium"
-    android:paddingLeft="@dimen/margin_medium"
-    android:paddingRight="@dimen/margin_medium"
     android:paddingStart="@dimen/margin_medium" >
 
     <ImageView
@@ -63,9 +61,9 @@
                 android:layout_height="12dp"
                 android:layout_gravity="center_vertical"
                 android:layout_marginEnd="@dimen/margin_small"
-                android:layout_marginRight="@dimen/margin_small"
                 android:contentDescription="@null"
-                tools:src="@drawable/plugin_update_available_icon" />
+                tools:src="@drawable/ic_sync_white_24dp"
+                tools:tint="@color/alert_yellow" />
 
             <TextView
                 android:id="@+id/plugin_status_text"

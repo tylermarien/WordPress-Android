@@ -13,16 +13,20 @@ import android.support.v4.app.FragmentManager;
 import android.support.v4.app.FragmentTransaction;
 import android.support.v7.app.AppCompatActivity;
 import android.view.MenuItem;
+import android.widget.TextView;
 
 import com.google.android.gms.auth.api.credentials.Credential;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient.ConnectionCallbacks;
 import com.google.android.gms.common.api.GoogleApiClient.OnConnectionFailedListener;
 
+import org.jetbrains.annotations.NotNull;
 import org.wordpress.android.R;
 import org.wordpress.android.WordPress;
 import org.wordpress.android.analytics.AnalyticsTracker;
+import org.wordpress.android.fluxc.model.SiteModel;
 import org.wordpress.android.fluxc.network.MemorizingTrustManager;
+import org.wordpress.android.fluxc.store.AccountStore.AuthEmailPayloadScheme;
 import org.wordpress.android.fluxc.store.SiteStore;
 import org.wordpress.android.login.GoogleFragment.GoogleListener;
 import org.wordpress.android.login.Login2FaFragment;
@@ -50,10 +54,14 @@ import org.wordpress.android.ui.accounts.HelpActivity.Origin;
 import org.wordpress.android.ui.accounts.SmartLockHelper.Callback;
 import org.wordpress.android.ui.accounts.login.LoginPrologueFragment;
 import org.wordpress.android.ui.accounts.login.LoginPrologueListener;
+import org.wordpress.android.ui.main.SitePickerActivity;
 import org.wordpress.android.ui.notifications.services.NotificationsUpdateServiceStarter;
+import org.wordpress.android.ui.posts.BasicFragmentDialog;
+import org.wordpress.android.ui.posts.BasicFragmentDialog.BasicDialogPositiveClickInterface;
 import org.wordpress.android.ui.reader.services.update.ReaderUpdateLogic;
 import org.wordpress.android.ui.reader.services.update.ReaderUpdateServiceStarter;
 import org.wordpress.android.util.AppLog;
+import org.wordpress.android.util.AppLog.T;
 import org.wordpress.android.util.CrashlyticsUtils;
 import org.wordpress.android.util.LanguageUtils;
 import org.wordpress.android.util.LocaleManager;
@@ -76,7 +84,7 @@ import dagger.android.support.HasSupportFragmentInjector;
 
 public class LoginActivity extends AppCompatActivity implements ConnectionCallbacks, OnConnectionFailedListener,
         Callback, LoginListener, GoogleListener, LoginPrologueListener, SignupSheetListener,
-        HasSupportFragmentInjector {
+        HasSupportFragmentInjector, BasicDialogPositiveClickInterface {
     public static final String ARG_JETPACK_CONNECT_SOURCE = "ARG_JETPACK_CONNECT_SOURCE";
     public static final String MAGIC_LOGIN = "magic-login";
     public static final String TOKEN_PARAMETER = "token";
@@ -85,6 +93,8 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
     private static final String KEY_SMARTLOCK_HELPER_STATE = "KEY_SMARTLOCK_HELPER_STATE";
 
     private static final String FORGOT_PASSWORD_URL_SUFFIX = "wp-login.php?action=lostpassword";
+
+    private static final String GOOGLE_ERROR_DIALOG_TAG = "google_error_dialog_tag";
 
     private enum SmartLockHelperState {
         NOT_TRIGGERED,
@@ -104,6 +114,7 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
     @Inject DispatchingAndroidInjector<Fragment> mFragmentInjector;
     @Inject protected LoginAnalyticsListener mLoginAnalyticsListener;
     @Inject ZendeskHelper mZendeskHelper;
+    @Inject protected SiteStore mSiteStore;
 
     @Override
     protected void attachBaseContext(Context newBase) {
@@ -127,6 +138,7 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
 
             switch (getLoginMode()) {
                 case FULL:
+                case WPCOM_LOGIN_ONLY:
                     showFragment(new LoginPrologueFragment(), LoginPrologueFragment.TAG);
                     break;
                 case SELFHOSTED_ONLY:
@@ -158,14 +170,6 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
 
     @Override
     public void onSaveInstanceState(Bundle outState) {
-        SignupGoogleFragment signupGoogleFragment;
-        FragmentManager fragmentManager = getSupportFragmentManager();
-        signupGoogleFragment = (SignupGoogleFragment) fragmentManager.findFragmentByTag(SignupGoogleFragment.TAG);
-
-        if (signupGoogleFragment != null) {
-            fragmentManager.beginTransaction().remove(signupGoogleFragment).commit();
-        }
-
         super.onSaveInstanceState(outState);
 
         outState.putBoolean(KEY_SIGNUP_SHEET_DISPLAYED, mSignupSheetDisplayed);
@@ -190,7 +194,7 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
     private void slideInFragment(Fragment fragment, boolean shouldAddToBackStack, String tag) {
         FragmentTransaction fragmentTransaction = getSupportFragmentManager().beginTransaction();
         fragmentTransaction.setCustomAnimations(R.anim.activity_slide_in_from_right, R.anim.activity_slide_out_to_left,
-                                                R.anim.activity_slide_in_from_left, R.anim.activity_slide_out_to_right);
+                R.anim.activity_slide_in_from_left, R.anim.activity_slide_out_to_right);
         fragmentTransaction.replace(R.id.fragment_container, fragment, tag);
         if (shouldAddToBackStack) {
             fragmentTransaction.addToBackStack(null);
@@ -234,6 +238,7 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
     private void loggedInAndFinish(ArrayList<Integer> oldSitesIds, boolean doLoginUpdate) {
         switch (getLoginMode()) {
             case FULL:
+            case WPCOM_LOGIN_ONLY:
                 ActivityLauncher.showMainActivityAndLoginEpilogue(this, oldSitesIds, doLoginUpdate);
                 setResult(Activity.RESULT_OK);
                 finish();
@@ -247,8 +252,26 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
                 break;
             case SHARE_INTENT:
             case SELFHOSTED_ONLY:
+                // We are comparing list of site ID's before self-hosted site was added and after, trying to find a
+                // newly added self-hosted site's ID, so we can select it
+                ArrayList<Integer> newSitesIds = new ArrayList<>();
+                for (SiteModel site : mSiteStore.getSites()) {
+                    newSitesIds.add(site.getId());
+                }
+                newSitesIds.removeAll(oldSitesIds);
+
+                if (newSitesIds.size() > 0) {
+                    Intent intent = new Intent();
+                    intent.putExtra(SitePickerActivity.KEY_LOCAL_ID, newSitesIds.get(0));
+                    setResult(Activity.RESULT_OK, intent);
+                } else {
+                    AppLog.e(T.MAIN, "Couldn't detect newly added self-hosted site. "
+                                     + "Expected at least 1 site ID but was 0.");
+                    ToastUtils.showToast(this, R.string.site_picker_failed_selecting_added_site);
+                    setResult(Activity.RESULT_OK);
+                }
+
                 // skip the epilogue when only added a self-hosted site or sharing to WordPress
-                setResult(Activity.RESULT_OK);
                 finish();
                 break;
         }
@@ -256,6 +279,7 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        AppLog.d(T.MAIN, "LoginActivity: onActivity Result - requestCode" + requestCode);
         super.onActivityResult(requestCode, resultCode, data);
 
         switch (requestCode) {
@@ -364,6 +388,7 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
 
     @Override
     public void onSignupSheetGoogleClicked() {
+        dismissSignupSheet();
         AnalyticsTracker.track(AnalyticsTracker.Stat.CREATE_ACCOUNT_INITIATED);
         AnalyticsTracker.track(AnalyticsTracker.Stat.SIGNUP_GOOGLE_BUTTON_TAPPED);
 
@@ -371,12 +396,6 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
             SignupGoogleFragment signupGoogleFragment;
             FragmentManager fragmentManager = getSupportFragmentManager();
             FragmentTransaction fragmentTransaction = fragmentManager.beginTransaction();
-            signupGoogleFragment = (SignupGoogleFragment) fragmentManager.findFragmentByTag(SignupGoogleFragment.TAG);
-
-            if (signupGoogleFragment != null) {
-                fragmentTransaction.remove(signupGoogleFragment);
-            }
-
             signupGoogleFragment = new SignupGoogleFragment();
             signupGoogleFragment.setRetainInstance(true);
             fragmentTransaction.add(signupGoogleFragment, SignupGoogleFragment.TAG);
@@ -414,7 +433,8 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
     public void gotWpcomEmail(String email) {
         if (getLoginMode() != LoginMode.WPCOM_LOGIN_DEEPLINK && getLoginMode() != LoginMode.SHARE_INTENT) {
             LoginMagicLinkRequestFragment loginMagicLinkRequestFragment = LoginMagicLinkRequestFragment.newInstance(
-                    email, mIsJetpackConnect, mJetpackConnectSource != null ? mJetpackConnectSource.toString() : null);
+                    email, AuthEmailPayloadScheme.WORDPRESS, mIsJetpackConnect,
+                    mJetpackConnectSource != null ? mJetpackConnectSource.toString() : null);
             slideInFragment(loginMagicLinkRequestFragment, true, LoginMagicLinkRequestFragment.TAG);
         } else {
             LoginEmailPasswordFragment loginEmailPasswordFragment =
@@ -502,8 +522,8 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
         dismissSignupSheet();
         mLoginAnalyticsListener.trackLoginSocial2faNeeded();
         Login2FaFragment login2FaFragment = Login2FaFragment.newInstanceSocial(email, userId,
-                                                                               nonceAuthenticator, nonceBackup,
-                                                                               nonceSms);
+                nonceAuthenticator, nonceBackup,
+                nonceSms);
         slideInFragment(login2FaFragment, true, Login2FaFragment.TAG);
     }
 
@@ -592,16 +612,10 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
     }
 
     @Override
-    public void addGoogleLoginFragment(@NonNull Fragment parent) {
+    public void addGoogleLoginFragment() {
         LoginGoogleFragment loginGoogleFragment;
-        FragmentManager fragmentManager = parent.getChildFragmentManager();
+        FragmentManager fragmentManager = getSupportFragmentManager();
         FragmentTransaction fragmentTransaction = fragmentManager.beginTransaction();
-        loginGoogleFragment = (LoginGoogleFragment) fragmentManager.findFragmentByTag(LoginGoogleFragment.TAG);
-
-        if (loginGoogleFragment != null) {
-            fragmentTransaction.remove(loginGoogleFragment);
-        }
-
         loginGoogleFragment = new LoginGoogleFragment();
         loginGoogleFragment.setRetainInstance(true);
         fragmentTransaction.add(loginGoogleFragment, LoginGoogleFragment.TAG);
@@ -672,7 +686,7 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
         }
 
         mSmartLockHelper.saveCredentialsInSmartLock(StringUtils.notNullStr(username), StringUtils.notNullStr(password),
-                                                    displayName, profilePicture);
+                displayName, profilePicture);
     }
 
     @Override
@@ -728,7 +742,11 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
 
     @Override
     public void showSignupToLoginMessage() {
-        Snackbar.make(findViewById(R.id.main_view), R.string.signup_user_exists, Snackbar.LENGTH_LONG).show();
+        Snackbar snackbar =
+                Snackbar.make(findViewById(R.id.main_view), R.string.signup_user_exists, Snackbar.LENGTH_LONG);
+        TextView snackbarText = snackbar.getView().findViewById(android.support.design.R.id.snackbar_text);
+        snackbarText.setMaxLines(2);
+        snackbar.show();
     }
 
     // GoogleListener
@@ -759,6 +777,31 @@ public class LoginActivity extends AppCompatActivity implements ConnectionCallba
 
         setResult(Activity.RESULT_OK);
         finish();
+    }
+
+    @Override
+    public void onGoogleSignupError(String msg) {
+        // Only show the error dialog if the activity is still active
+        if (!getSupportFragmentManager().isStateSaved()) {
+            BasicFragmentDialog dialog = new BasicFragmentDialog();
+            dialog.initialize(GOOGLE_ERROR_DIALOG_TAG, getString(R.string.error),
+                    msg,
+                    getString(org.wordpress.android.login.R.string.login_error_button),
+                    null,
+                    null);
+            dialog.show(getSupportFragmentManager(), GOOGLE_ERROR_DIALOG_TAG);
+        } else {
+            AppLog.d(T.MAIN, "'Google sign up failed' dialog not shown, because the activity wasn't visible.");
+        }
+    }
+
+    @Override
+    public void onPositiveClicked(@NotNull String instanceTag) {
+        switch (instanceTag) {
+            case GOOGLE_ERROR_DIALOG_TAG:
+                // just dismiss the dialog
+                break;
+        }
     }
 
     private void dismissSignupSheet() {

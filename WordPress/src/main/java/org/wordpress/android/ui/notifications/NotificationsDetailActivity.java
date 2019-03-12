@@ -26,6 +26,7 @@ import org.wordpress.android.fluxc.model.CommentStatus;
 import org.wordpress.android.fluxc.model.SiteModel;
 import org.wordpress.android.fluxc.store.AccountStore;
 import org.wordpress.android.fluxc.store.SiteStore;
+import org.wordpress.android.fluxc.tools.FormattableRangeType;
 import org.wordpress.android.models.Note;
 import org.wordpress.android.push.GCMMessageService;
 import org.wordpress.android.ui.ActivityLauncher;
@@ -33,7 +34,6 @@ import org.wordpress.android.ui.WPWebViewActivity;
 import org.wordpress.android.ui.comments.CommentActions;
 import org.wordpress.android.ui.comments.CommentDetailFragment;
 import org.wordpress.android.ui.notifications.adapters.NotesAdapter;
-import org.wordpress.android.ui.notifications.blocks.NoteBlockRangeType;
 import org.wordpress.android.ui.notifications.services.NotificationsUpdateServiceStarter;
 import org.wordpress.android.ui.notifications.utils.NotificationsActions;
 import org.wordpress.android.ui.notifications.utils.NotificationsUtils;
@@ -42,11 +42,6 @@ import org.wordpress.android.ui.posts.BasicFragmentDialog.BasicDialogPositiveCli
 import org.wordpress.android.ui.prefs.AppPrefs;
 import org.wordpress.android.ui.reader.ReaderActivityLauncher;
 import org.wordpress.android.ui.reader.ReaderPostDetailFragment;
-import org.wordpress.android.ui.stats.StatsAbstractFragment;
-import org.wordpress.android.ui.stats.StatsActivity;
-import org.wordpress.android.ui.stats.StatsTimeframe;
-import org.wordpress.android.ui.stats.StatsViewAllActivity;
-import org.wordpress.android.ui.stats.StatsViewType;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.LocaleManager;
 import org.wordpress.android.util.StringUtils;
@@ -67,6 +62,8 @@ import static org.wordpress.android.models.Note.NOTE_COMMENT_LIKE_TYPE;
 import static org.wordpress.android.models.Note.NOTE_COMMENT_TYPE;
 import static org.wordpress.android.models.Note.NOTE_FOLLOW_TYPE;
 import static org.wordpress.android.models.Note.NOTE_LIKE_TYPE;
+import static org.wordpress.android.ui.notifications.services.NotificationsUpdateServiceStarter
+        .IS_TAPPED_ON_NOTIFICATION;
 
 public class NotificationsDetailActivity extends AppCompatActivity implements
         CommentActions.OnNoteCommentActionListener,
@@ -78,6 +75,7 @@ public class NotificationsDetailActivity extends AppCompatActivity implements
     @Inject SiteStore mSiteStore;
 
     private String mNoteId;
+    private boolean mIsTappedOnNotification;
 
     private WPViewPager mViewPager;
     private ViewPager.OnPageChangeListener mOnPageChangeListener;
@@ -103,11 +101,13 @@ public class NotificationsDetailActivity extends AppCompatActivity implements
 
         if (savedInstanceState == null) {
             mNoteId = getIntent().getStringExtra(NotificationsListFragment.NOTE_ID_EXTRA);
+            mIsTappedOnNotification = getIntent().getBooleanExtra(IS_TAPPED_ON_NOTIFICATION, false);
         } else {
             if (savedInstanceState.containsKey(ARG_TITLE) && getSupportActionBar() != null) {
                 getSupportActionBar().setTitle(StringUtils.notNullStr(savedInstanceState.getString(ARG_TITLE)));
             }
             mNoteId = savedInstanceState.getString(NotificationsListFragment.NOTE_ID_EXTRA);
+            mIsTappedOnNotification = savedInstanceState.getBoolean(IS_TAPPED_ON_NOTIFICATION);
         }
 
         // set up the viewpager and adapter for lateral navigation
@@ -116,7 +116,9 @@ public class NotificationsDetailActivity extends AppCompatActivity implements
                                       new WPViewPagerTransformer(WPViewPagerTransformer.TransformType.SLIDE_OVER));
 
         Note note = NotificationsTable.getNoteById(mNoteId);
-        updateUIAndNote(note == null);
+        // if this is coming from a tapped push notification, let's try refreshing it as its contents may have been
+        // updated since the notification was first received and created on the system's dashboard
+        updateUIAndNote((note == null) || mIsTappedOnNotification);
 
         // Hide the keyboard, unless we arrived here from the 'Reply' action in a push notification
         if (!getIntent().getBooleanExtra(NotificationsListFragment.NOTE_INSTANT_REPLY_EXTRA, false)) {
@@ -224,6 +226,7 @@ public class NotificationsDetailActivity extends AppCompatActivity implements
             outState.putString(ARG_TITLE, getSupportActionBar().getTitle().toString());
         }
         outState.putString(NotificationsListFragment.NOTE_ID_EXTRA, mNoteId);
+        outState.putBoolean(IS_TAPPED_ON_NOTIFICATION, mIsTappedOnNotification);
         super.onSaveInstanceState(outState);
     }
 
@@ -314,7 +317,7 @@ public class NotificationsDetailActivity extends AppCompatActivity implements
      * Tries to pick the correct fragment detail type for a given note
      * Defaults to NotificationDetailListFragment
      */
-    private Fragment getDetailFragmentForNote(Note note, int idForFragmentContainer) {
+    private Fragment getDetailFragmentForNote(Note note) {
         if (note == null) {
             return null;
         }
@@ -326,8 +329,7 @@ public class NotificationsDetailActivity extends AppCompatActivity implements
                                                                  false);
             fragment = CommentDetailFragment.newInstance(note.getId(),
                                                          getIntent().getStringExtra(
-                                                                 NotificationsListFragment.NOTE_PREFILLED_REPLY_EXTRA),
-                                                         idForFragmentContainer);
+                                                                 NotificationsListFragment.NOTE_PREFILLED_REPLY_EXTRA));
 
             if (isInstantReply) {
                 ((CommentDetailFragment) fragment).enableShouldFocusReplyField();
@@ -366,7 +368,7 @@ public class NotificationsDetailActivity extends AppCompatActivity implements
         ReaderActivityLauncher.showReaderPostDetail(this, siteId, postId);
     }
 
-    public void showStatsActivityForSite(long siteId, NoteBlockRangeType rangeType) {
+    public void showStatsActivityForSite(long siteId, FormattableRangeType rangeType) {
         SiteModel site = mSiteStore.getSiteBySiteId(siteId);
         if (site == null) {
             // One way the site can be null: new site created, receive a notification from this site,
@@ -377,21 +379,13 @@ public class NotificationsDetailActivity extends AppCompatActivity implements
         showStatsActivityForSite(site, rangeType);
     }
 
-    private void showStatsActivityForSite(@NonNull SiteModel site, NoteBlockRangeType rangeType) {
+    private void showStatsActivityForSite(@NonNull SiteModel site, FormattableRangeType rangeType) {
         if (isFinishing()) {
             return;
         }
 
-        if (rangeType == NoteBlockRangeType.FOLLOW) {
-            Intent intent = new Intent(this, StatsViewAllActivity.class);
-            intent.putExtra(StatsAbstractFragment.ARGS_VIEW_TYPE, StatsViewType.FOLLOWERS);
-            intent.putExtra(StatsAbstractFragment.ARGS_TIMEFRAME, StatsTimeframe.DAY);
-            intent.putExtra(StatsAbstractFragment.ARGS_SELECTED_DATE, "");
-            intent.putExtra(StatsAbstractFragment.ARGS_IS_SINGLE_VIEW, true);
-            intent.putExtra(StatsActivity.ARG_LOCAL_TABLE_SITE_ID, site.getId());
-
-            intent.putExtra(StatsViewAllActivity.ARG_STATS_VIEW_ALL_TITLE, getString(R.string.stats_view_followers));
-            startActivity(intent);
+        if (rangeType == FormattableRangeType.FOLLOW) {
+            ActivityLauncher.viewFollowersStats(this, site);
         } else {
             ActivityLauncher.viewBlogStats(this, site);
         }
@@ -483,7 +477,7 @@ public class NotificationsDetailActivity extends AppCompatActivity implements
 
         @Override
         public Fragment getItem(int position) {
-            return getDetailFragmentForNote(mNoteList.get(position), position);
+            return getDetailFragmentForNote(mNoteList.get(position));
         }
 
         @Override

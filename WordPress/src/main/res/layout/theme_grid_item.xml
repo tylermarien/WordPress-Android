@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:card_view="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/theme_grid_card_view"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
@@ -9,10 +11,8 @@
         android:id="@+id/theme_grid_card"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginLeft="@dimen/theme_browser_cardview_margin_large"
-        android:layout_marginRight="@dimen/theme_browser_cardview_margin_large"
         android:layout_marginTop="@dimen/theme_browser_cardview_margin_large"
-        card_view:cardCornerRadius="@dimen/cardview_default_radius"
+        card_view:cardCornerRadius="@dimen/default_cardview_radius"
         card_view:cardElevation="@dimen/card_elevation"
         android:layout_marginStart="@dimen/theme_browser_cardview_margin_large"
         android:layout_marginEnd="@dimen/theme_browser_cardview_margin_large">
@@ -20,7 +20,7 @@
         <RelativeLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_margin="@dimen/cardview_default_radius">
+            android:layout_margin="@dimen/default_cardview_radius">
 
             <FrameLayout
                 android:id="@+id/theme_grid_item_image_layout"
@@ -32,9 +32,10 @@
                 <ImageView
                     android:id="@+id/theme_grid_item_image"
                     android:layout_width="match_parent"
-                    android:layout_height="@dimen/theme_browser_preview_image_height"
+                    android:layout_height="wrap_content"
                     android:adjustViewBounds="true"
-                    android:contentDescription="@string/theme_image_desc"/>
+                    android:contentDescription="@string/theme_image_desc"
+                    tools:src="@drawable/bg_rectangle_grey_lighten_20_themes_100dp"/>
 
             </FrameLayout>
 
@@ -43,12 +44,11 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_below="@+id/theme_grid_item_image_layout"
-                android:layout_marginTop="@dimen/cardview_default_radius">
+                android:layout_marginTop="@dimen/default_cardview_radius">
 
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_alignParentLeft="true"
                     android:layout_centerVertical="true"
                     android:layout_alignParentStart="true">
 
@@ -56,7 +56,6 @@
                         android:id="@+id/theme_grid_item_name"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginLeft="@dimen/theme_browser_cardview_header_margin"
                         android:textColor="@color/black"
                         android:textStyle="bold"
                         android:layout_marginStart="@dimen/theme_browser_cardview_header_margin"/>
@@ -65,7 +64,6 @@
                         android:id="@+id/theme_grid_item_price"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginLeft="@dimen/theme_browser_cardview_margin_large"
                         android:textColor="@color/theme_price"
                         android:textStyle="bold"
                         android:layout_marginStart="@dimen/theme_browser_cardview_margin_large"/>
@@ -74,7 +72,6 @@
                         android:id="@+id/theme_grid_item_active"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginLeft="@dimen/theme_browser_cardview_margin_large"
                         android:text="@string/active"
                         android:textAllCaps="true"
                         android:textColor="@color/theme_active"
@@ -88,7 +85,6 @@
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_alignParentRight="true"
                     android:layout_alignParentEnd="true">
 
                     <View
@@ -105,7 +101,8 @@
                         android:background="?android:attr/selectableItemBackground"
                         android:contentDescription="@string/button_more"
                         android:padding="@dimen/theme_browser_more_button_padding"
-                        card_view:srcCompat="@drawable/ic_ellipsis_grey_lighten_10_24dp" />
+                        android:src="@drawable/ic_ellipsis_white_24dp"
+                        android:tint="@color/grey_lighten_10" />
 
                 </LinearLayout>
 
