@@ -56,6 +56,9 @@ class PostListViewModel @Inject constructor(
     private val _scrollToPosition = SingleLiveEvent<Int>()
     val scrollToPosition: LiveData<Int> = _scrollToPosition
 
+    private val _showNewPostsButton = SingleLiveEvent<Unit>()
+    val showNewPostsButton: LiveData<Unit> = _showNewPostsButton
+
     private val pagedListWrapper: PagedListWrapper<PostListItemType> by lazy {
         val listDescriptor = requireNotNull(listDescriptor) {
             "ListDescriptor needs to be initialized before this is observed!"
@@ -74,7 +77,7 @@ class PostListViewModel @Inject constructor(
         val result = MediatorLiveData<PagedPostList>()
         result.addSource(pagedListWrapper.data) { pagedPostList ->
             pagedPostList?.let {
-                onDataUpdated(it)
+                onDataUpdated(oldData = result.value, newData = it)
                 result.value = it
             }
         }
@@ -159,7 +162,26 @@ class PostListViewModel @Inject constructor(
 
     // Utils
 
-    private fun onDataUpdated(data: PagedPostList) {
+    private fun onDataUpdated(oldData: PagedPostList?, newData: PagedPostList) {
+        // TODO: Would it be a problem to handle both of these together since the list might scroll
+        handleNewPostsAddedForDataChange(oldData, newData)
+        handleScrollToPositionForDataChangeIfNecessary(newData)
+    }
+
+    private fun handleNewPostsAddedForDataChange(oldData: PagedPostList?, newData: PagedPostList) {
+        val oldFirstItem = oldData?.firstOrNull()
+        val newFirstItem = newData.firstOrNull()
+        if (oldFirstItem == null || newFirstItem == null) {
+            // We don't care if the old or new list is empty
+            return
+        }
+        if (!doesPostListItemTypesRepresentTheSameActualItem(oldFirstItem, newFirstItem)) {
+            // First item changed
+            _showNewPostsButton.asyncCall()
+        }
+    }
+
+    private fun handleScrollToPositionForDataChangeIfNecessary(data: PagedPostList) {
         val localPostId = scrollToLocalPostId
         if (localPostId != null) {
             scrollToLocalPostId = null

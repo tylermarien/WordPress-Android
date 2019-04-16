@@ -8,6 +8,7 @@ import android.support.v4.app.Fragment
 import android.support.v4.app.FragmentActivity
 import android.support.v7.widget.LinearLayoutManager
 import android.support.v7.widget.RecyclerView
+import android.support.v7.widget.RecyclerView.OnScrollListener
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -50,6 +51,7 @@ class PostListFragment : Fragment() {
     private var recyclerView: RecyclerView? = null
     private var actionableEmptyView: ActionableEmptyView? = null
     private var progressLoadMore: ProgressBar? = null
+    private var newPostsButton: Button? = null
 
     private lateinit var nonNullActivity: FragmentActivity
     // TODO: We can get rid of SiteModel in the Fragment once we remove the `isPhotonCapable`
@@ -125,6 +127,14 @@ class PostListFragment : Fragment() {
                 recyclerView?.scrollToPosition(index)
             }
         })
+        viewModel.showNewPostsButton.observe(this, Observer {
+            it?.let {
+                newPostsButton?.let { button ->
+                    // TODO: We won't show it all the time
+                    uiHelpers.updateVisibility(button, visible = true)
+                }
+            }
+        })
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -139,12 +149,29 @@ class PostListFragment : Fragment() {
         recyclerView = view.findViewById(R.id.recycler_view)
         progressLoadMore = view.findViewById(R.id.progress)
         actionableEmptyView = view.findViewById(R.id.actionable_empty_view)
+        newPostsButton = view.findViewById(R.id.post_list_new_posts_button)
+        newPostsButton?.setOnClickListener {
+            // TODO: Scroll to top
+            recyclerView?.scrollToPosition(0)
+        }
 
         val context = nonNullActivity
         val spacingVertical = context.resources.getDimensionPixelSize(R.dimen.margin_medium)
-        recyclerView?.layoutManager = LinearLayoutManager(context)
+        val layoutManager = LinearLayoutManager(context)
+        recyclerView?.layoutManager = layoutManager
         recyclerView?.addItemDecoration(RecyclerItemDecoration(0, spacingVertical))
         recyclerView?.adapter = postListAdapter
+        recyclerView?.addOnScrollListener(object : OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                newPostsButton?.let {
+                    // TODO: not a great way to check and not in the right place
+                    if (dy == 0 && it.visibility == View.VISIBLE) {
+                        uiHelpers.updateVisibility(it, visible = false)
+                    }
+                }
+                super.onScrolled(recyclerView, dx, dy)
+            }
+        })
 
         swipeToRefreshHelper = buildSwipeToRefreshHelper(swipeRefreshLayout) {
             if (!NetworkUtils.isNetworkAvailable(nonNullActivity)) {

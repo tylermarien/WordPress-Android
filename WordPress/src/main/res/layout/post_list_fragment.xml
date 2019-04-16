@@ -40,6 +40,15 @@
 
     </org.wordpress.android.util.widgets.CustomSwipeRefreshLayout>
 
+    <Button
+        android:id="@+id/post_list_new_posts_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="new posts"
+        android:visibility="gone"
+        android:layout_centerHorizontal="true"
+        android:layout_alignParentTop="true"/>
+
     <ProgressBar
         android:id="@+id/progress"
         style="?android:attr/progressBarStyleInverse"
