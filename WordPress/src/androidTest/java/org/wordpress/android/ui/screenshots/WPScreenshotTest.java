@@ -13,6 +13,7 @@ import org.wordpress.android.R;
 import org.wordpress.android.e2e.pages.PostsListPage;
 import org.wordpress.android.e2e.pages.SitePickerPage;
 import org.wordpress.android.support.BaseTest;
+import org.wordpress.android.support.DemoModeEnabler;
 import org.wordpress.android.ui.WPLaunchActivity;
 import org.wordpress.android.ui.posts.EditPostActivity;
 import org.wordpress.android.ui.prefs.AppPrefs;
@@ -49,6 +50,8 @@ public class WPScreenshotTest extends BaseTest {
     public ActivityTestRule<WPLaunchActivity> mActivityTestRule = new ActivityTestRule<>(WPLaunchActivity.class,
             false, false);
 
+    private DemoModeEnabler mDemoModeEnabler = new DemoModeEnabler();
+
     @Test
     public void wPScreenshotTest() {
         mActivityTestRule.launchActivity(null);
@@ -57,12 +60,18 @@ public class WPScreenshotTest extends BaseTest {
         // Never show the Gutenberg dialog when opening a post
         AppPrefs.setGutenbergInformativeDialogDisabled(true);
 
+        // Enable Demo Mode
+        mDemoModeEnabler.enable();
+
         tmpWPLogin();
         editBlogPost();
         manageMedia();
         navigateStats();
         navigateNotifications();
         tmpWpLogout();
+
+        // Turn Demo Mode off on the emulator when we're done
+        mDemoModeEnabler.disable();
     }
 
     private void tmpWPLogin() {
